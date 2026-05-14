@@ -1,0 +1,15 @@
+{
+  "name": "worldart-globe",
+  "version": "1.0.0",
+  "description": "Live 3D-globe abstract visualization powered by WorldMonitor.app intelligence feeds",
+  "private": true,
+  "license": "AGPL-3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node dev-server.js",
+    "deploy": "vercel --prod"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

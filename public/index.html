@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Globe — Live Planetary Intelligence</title>
+  <meta name="description" content="A live 3D globe of earthquakes, wildfires, volcanoes, storms, floods and live air traffic. Inspired by worldmonitor.app." />
+
+  <style>
+    :root {
+      --c-quake:    #6cdfff;
+      --c-fire:     #ff6020;
+      --c-volcano:  #ffd400;
+      --c-storm:    #ff44cc;
+      --c-flood:    #3a82ff;
+      --c-aircraft: #ffffff;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    body { font-family: 'IBM Plex Mono', ui-monospace, 'Courier New', monospace; color: #fff; }
+
+    #globe { position: fixed; inset: 0; }
+
+    /* Background — deep-space gradient + faint star noise */
+    #bg {
+      position: fixed; inset: 0; z-index: -2;
+      background:
+        radial-gradient(ellipse at 32% 18%, rgba(40, 16, 90, 0.55), transparent 55%),
+        radial-gradient(ellipse at 72% 78%, rgba(120, 26, 70, 0.40), transparent 60%),
+        radial-gradient(ellipse at 50% 50%, rgba(3, 5, 16, 1), #000 100%);
+    }
+    #stars {
+      position: fixed; inset: 0; z-index: -1;
+      background-image: radial-gradient(rgba(255,255,255,0.5) 0.5px, transparent 0.5px);
+      background-size: 80px 80px;
+      opacity: 0.35;
+      mix-blend-mode: screen;
+    }
+
+    /* HUD overlays */
+    .hud {
+      position: fixed; pointer-events: none;
+      color: rgba(255, 255, 255, 0.85);
+      text-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+    }
+    .hud--tl { top: 22px; left: 26px; max-width: 50%; }
+    .hud--tr { top: 22px; right: 26px; text-align: right; }
+    .hud--bl { bottom: 24px; left: 26px; max-width: 50%; }
+    .hud--br { bottom: 24px; right: 26px; text-align: right; max-width: 50%; }
+    @media (max-width: 720px) {
+      .hud--tl { max-width: 60%; }
+      .title { font-size: 9px !important; letter-spacing: 0.18em !important; }
+      .subtitle { font-size: 7px !important; }
+      .legend { font-size: 9px !important; }
+      .status, .attrib { font-size: 8px !important; }
+    }
+
+    .title {
+      font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.9);
+    }
+    .subtitle {
+      font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.4); margin-top: 4px;
+    }
+    .pulse {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: #6cdfff; margin-right: 8px; vertical-align: middle;
+      animation: blink 2s ease-in-out infinite;
+      box-shadow: 0 0 8px #6cdfff;
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+    /* Legend / toggles */
+    .legend { font-size: 10px; line-height: 1.95; letter-spacing: 0.08em; pointer-events: auto; }
+    .legend .row {
+      display: flex; align-items: center; gap: 8px; justify-content: flex-end;
+      cursor: pointer; user-select: none;
+      opacity: 1; transition: opacity 0.2s;
+    }
+    .legend .row.off { opacity: 0.3; }
+    .legend .row:hover { color: #fff; }
+    .legend .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      box-shadow: 0 0 6px currentColor;
+    }
+    .legend .count {
+      color: rgba(255, 255, 255, 0.45);
+      min-width: 44px; text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .legend .label { text-transform: uppercase; }
+
+    /* Tooltip */
+    .tip {
+      position: fixed; pointer-events: none;
+      background: rgba(8, 10, 22, 0.88); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 10px 14px; border-radius: 4px;
+      font-size: 11px; line-height: 1.5;
+      transform: translate(14px, 14px); max-width: 320px;
+      display: none; z-index: 100;
+    }
+    .tip .t-type {
+      font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--accent, #6cdfff);
+    }
+    .tip .t-place { font-weight: 600; margin-top: 3px; }
+    .tip .t-meta {
+      color: rgba(255, 255, 255, 0.55); font-size: 10px; margin-top: 4px;
+    }
+
+    /* Status line */
+    .status {
+      font-size: 10px; line-height: 1.7; letter-spacing: 0.05em;
+      color: rgba(255, 255, 255, 0.5);
+    }
+    .status b { color: rgba(255, 255, 255, 0.9); font-weight: normal; }
+
+    /* Attribution */
+    .attrib {
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.35);
+    }
+    .attrib a {
+      color: inherit; text-decoration: none;
+      border-bottom: 1px dotted rgba(255, 255, 255, 0.25); pointer-events: auto;
+    }
+    .attrib a:hover { color: #fff; }
+
+    /* Boot screen */
+    .boot {
+      position: fixed; inset: 0; display: grid; place-items: center;
+      background: #000; z-index: 200; transition: opacity 0.6s ease 0.2s;
+      pointer-events: none;
+    }
+    .boot.hide { opacity: 0; }
+    .boot .b-inner { text-align: center; color: rgba(255, 255, 255, 0.6); }
+    .boot .b-title {
+      font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase;
+    }
+    .boot .b-sub {
+      margin-top: 8px; font-size: 9px; letter-spacing: 0.2em;
+      color: rgba(255, 255, 255, 0.25); text-transform: uppercase;
+    }
+    .boot .b-bar {
+      margin-top: 16px; width: 240px; height: 1px;
+      background: rgba(255, 255, 255, 0.1); position: relative;
+      overflow: hidden;
+    }
+    .boot .b-bar::after {
+      content: ''; position: absolute; left: 0; top: 0; height: 100%; width: 30%;
+      background: linear-gradient(90deg, transparent, #6cdfff, transparent);
+      animation: scan 1.6s linear infinite;
+    }
+    @keyframes scan { 0% { left: -30%; } 100% { left: 100%; } }
+  </style>
+</head>
+<body>
+  <div id="bg"></div>
+  <div id="stars"></div>
+  <div id="globe"></div>
+
+  <div class="hud hud--tl">
+    <div class="title"><span class="pulse"></span>World Globe — Live Planetary Intelligence</div>
+    <div class="subtitle">USGS · NASA EONET · OpenSky Network</div>
+  </div>
+
+  <div class="hud hud--tr">
+    <div id="legend" class="legend"></div>
+  </div>
+
+  <div class="hud hud--bl">
+    <div id="status" class="status">Connecting to feeds…</div>
+  </div>
+
+  <div class="hud hud--br">
+    <div class="attrib">
+      Concept &amp; aggregation inspired by
+      <a href="https://worldmonitor.app/" target="_blank" rel="noopener">worldmonitor.app</a><br/>
+      <span id="last-refresh" style="opacity: 0.7">—</span>
+    </div>
+  </div>
+
+  <div id="tip" class="tip">
+    <div class="t-type" id="t-type"></div>
+    <div class="t-place" id="t-place"></div>
+    <div class="t-meta" id="t-meta"></div>
+  </div>
+
+  <div id="boot" class="boot">
+    <div class="b-inner">
+      <div class="b-title">Initialising globe</div>
+      <div class="b-sub">Aggregating world feeds…</div>
+      <div class="b-bar"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import Globe from 'https://esm.sh/globe.gl@2.34.0?bundle';
+
+    // ============================================================
+    // 1. Layer configuration — visual style per data category
+    // ============================================================
+    const LAYERS = {
+      earthquakes: {
+        label: 'QUAKES',
+        color: '#6cdfff', source: 'earthquakes',
+        radius:   d => 0.16 + Math.max(0, (d.magnitude || 1)) * 0.07,
+        altitude: d => Math.max(0.005, (d.magnitude || 1) / 14),
+        ringIf:   d => (d.magnitude || 0) >= 4.5,
+        ringMaxR: d => Math.max(2, (d.magnitude || 0) * 0.8),
+      },
+      fires: {
+        label: 'FIRES',
+        color: '#ff6020', source: 'events', category: 'wildfires',
+        radius:   () => 0.28,
+        altitude: () => 0.01,
+        ringIf:   () => true,  // every fire gets a small pulse so the layer is readable
+        ringMaxR: () => 1.2,
+      },
+      volcanoes: {
+        label: 'VOLCANOES',
+        color: '#ffd400', source: 'events', category: 'volcanoes',
+        radius:   () => 0.22,
+        altitude: () => 0.015,
+        ringIf:   () => true,
+        ringMaxR: () => 3,
+      },
+      storms: {
+        label: 'STORMS',
+        color: '#ff44cc', source: 'events', category: 'severeStorms',
+        radius:   () => 0.30,
+        altitude: () => 0.020,
+        ringIf:   () => true,
+        ringMaxR: () => 5,
+      },
+      floods: {
+        label: 'FLOODS',
+        color: '#3a82ff', source: 'events', category: 'floods',
+        radius:   () => 0.20,
+        altitude: () => 0.008,
+        ringIf:   () => false,
+      },
+      aircraft: {
+        label: 'AIRCRAFT',
+        // Soft luminous white — translucent so fires/quakes underneath stay legible.
+        color: 'rgba(255, 255, 255, 0.55)', source: 'aircraft',
+        // Aircraft rendered as small elevated dots — altitude mapped from
+        // real flight level, tiny radius keeps them dotty rather than pillarlike.
+        radius:   d => 0.025,
+        altitude: d => Math.min(0.14, ((d.altitude || 0) / 14000) * 0.14),
+        ringIf:   () => false,
+      },
+    };
+
+    // ============================================================
+    // 2. Source-fetch dedup — multiple layers can share one source
+    // ============================================================
+    const SOURCES = [...new Set(Object.values(LAYERS).map(l => l.source))];
+
+    const REFRESH_MS = {
+      earthquakes: 60_000,
+      events:      300_000,
+      aircraft:    30_000,
+    };
+
+    // ============================================================
+    // 3. Extractors — coerce upstream JSON shapes to flat point arrays
+    // ============================================================
+    const EXTRACT = {
+      earthquakes(resp) {
+        return (resp.features || []).map(f => {
+          const [lon, lat, depth] = f.geometry?.coordinates || [];
+          const p = f.properties || {};
+          return {
+            lat, lon, depth,
+            magnitude: p.mag,
+            place:     p.place || 'Unknown',
+            time:      p.time,
+            type:      `Magnitude ${(p.mag ?? 0).toFixed(1)} earthquake`,
+          };
+        });
+      },
+      // EONET v3 — returns one structure shared across fires/volcanoes/storms/floods.
+      // The extractor stashes events keyed by category so layers can pull their share.
+      events(resp) {
+        const buckets = { wildfires: [], volcanoes: [], severeStorms: [], floods: [] };
+        for (const e of (resp.events || [])) {
+          const catId = e.categories?.[0]?.id;
+          if (!(catId in buckets)) continue;
+          const geom  = e.geometry?.[e.geometry.length - 1];   // latest position
+          const coords = geom?.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) continue;
+          let lon, lat;
+          // EONET sometimes uses Polygon (array of arrays). Take centroid (first point).
+          if (typeof coords[0] === 'number')      [lon, lat] = coords;
+          else if (Array.isArray(coords[0][0]))   [lon, lat] = coords[0][0];
+          else                                    [lon, lat] = coords[0];
+          buckets[catId].push({
+            lat, lon,
+            place:     e.title || e.categories[0].title,
+            time:      Date.parse(geom.date),
+            type:      e.categories[0].title,
+            magnitude: geom.magnitudeValue,
+            category:  catId,
+          });
+        }
+        return buckets;
+      },
+      aircraft(resp) {
+        // OpenSky returns positional arrays:
+        //   [icao24, callsign, country, time_pos, last_contact,
+        //    lon, lat, baro_alt, on_ground, velocity, heading, ...]
+        return (resp.states || []).filter(s => s[5] != null && s[6] != null)
+          .map(s => ({
+            lat:      s[6],
+            lon:      s[5],
+            icao:     s[0],
+            callsign: (s[1] || '').trim(),
+            country:  s[2],
+            altitude: s[7],
+            onGround: s[8],
+            velocity: s[9],
+            heading:  s[10],
+            place:    `${(s[1] || s[0]).trim()} · ${s[2]}`,
+            type:     'Aircraft',
+          }));
+      },
+    };
+
+    // ============================================================
+    // 4. State
+    // ============================================================
+    const state = {};
+    Object.keys(LAYERS).forEach(k => state[k] = { data: [], visible: true });
+
+    // ============================================================
+    // 5. Globe setup
+    // ============================================================
+    const globe = Globe({ animateIn: true })
+      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
+      .bumpImageUrl ('//unpkg.com/three-globe/example/img/earth-topology.png')
+      .backgroundColor('rgba(0,0,0,0)')
+      .showAtmosphere(true)
+      .atmosphereColor('#4080ff')
+      .atmosphereAltitude(0.20)
+      .showGraticules(false)
+      .pointsMerge(false)
+      .pointAltitude('alt')
+      .pointRadius('r')
+      .pointColor('color')
+      .pointResolution(8)
+      .pointLabel(() => '')
+      .arcsTransitionDuration(600)
+      .arcStartLat('startLat').arcStartLng('startLng')
+      .arcEndLat  ('endLat'  ).arcEndLng  ('endLng')
+      .arcColor('color')
+      .arcAltitudeAutoScale(0.5)
+      .arcStroke(0.35)
+      .arcDashLength(0.4)
+      .arcDashGap(2)
+      .arcDashAnimateTime(2200)
+      .ringLat('lat').ringLng('lon')
+      .ringColor('color')
+      .ringMaxRadius('maxR')
+      .ringPropagationSpeed(2.2)
+      .ringRepeatPeriod(1400)
+      (document.getElementById('globe'));
+
+    globe.controls().autoRotate = true;
+    globe.controls().autoRotateSpeed = 0.30;
+    globe.controls().enableDamping = true;
+    globe.controls().dampingFactor = 0.08;
+    globe.pointOfView({ lat: 20, lng: 10, altitude: 2.4 }, 0);
+
+    function resize() {
+      globe.width(window.innerWidth);
+      globe.height(window.innerHeight);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Pause auto-rotation while user is interacting; resume after 4s idle
+    let idleT;
+    function bumpIdle() {
+      globe.controls().autoRotate = false;
+      clearTimeout(idleT);
+      idleT = setTimeout(() => { globe.controls().autoRotate = true; }, 4000);
+    }
+    ['mousedown', 'wheel', 'touchstart'].forEach(ev =>
+      document.getElementById('globe').addEventListener(ev, bumpIdle, { passive: true })
+    );
+
+    // ============================================================
+    // 6. Tooltip
+    // ============================================================
+    const tip   = document.getElementById('tip');
+    const tType = document.getElementById('t-type');
+    const tPlc  = document.getElementById('t-place');
+    const tMeta = document.getElementById('t-meta');
+
+    function showTip(d) {
+      if (!d) { tip.style.display = 'none'; return; }
+      tip.style.display = 'block';
+      tip.style.setProperty('--accent', d.color || '#6cdfff');
+      tType.textContent = d.type || '';
+      tType.style.color = d.color || '#6cdfff';
+      tPlc.textContent  = d.place || '';
+      const bits = [];
+      if (d.magnitude != null)        bits.push(`M${d.magnitude.toFixed(1)}`);
+      if (d.depth     != null)        bits.push(`${d.depth.toFixed(0)} km deep`);
+      if (d.altitude && d.altitude > 0) bits.push(`${Math.round(d.altitude*3.281).toLocaleString()} ft`);
+      if (d.velocity)                 bits.push(`${Math.round(d.velocity*1.944)} kt`);
+      if (d.country)                  bits.push(d.country);
+      if (d.time)                     bits.push(new Date(d.time).toUTCString().replace('GMT', 'UTC'));
+      tMeta.textContent = bits.join('  ·  ');
+    }
+    globe.onPointHover(showTip);
+    window.addEventListener('mousemove', e => {
+      tip.style.left = e.clientX + 'px';
+      tip.style.top  = e.clientY + 'px';
+    });
+
+    // ============================================================
+    // 7. Compose all layers into globe primitives
+    // ============================================================
+    function compose() {
+      const points = [];
+      const arcs   = [];
+      const rings  = [];
+
+      for (const [key, layer] of Object.entries(LAYERS)) {
+        if (!state[key].visible) continue;
+        const data = state[key].data;
+
+        for (const p of data) {
+          if (p.lat == null || p.lon == null) continue;
+          points.push({
+            lat: p.lat, lng: p.lon,
+            r:    layer.radius(p),
+            alt:  layer.altitude(p),
+            color: layer.color,
+            place: p.place, type: p.type, time: p.time,
+            magnitude: p.magnitude, depth: p.depth, country: p.country,
+            altitude: p.altitude, velocity: p.velocity,
+          });
+
+          if (layer.ringIf && layer.ringIf(p)) {
+            rings.push({
+              lat: p.lat, lon: p.lon, color: layer.color,
+              maxR: (layer.ringMaxR ? layer.ringMaxR(p) : 3),
+            });
+          }
+        }
+      }
+
+      globe.pointsData(points);
+      globe.arcsData(arcs);
+      globe.ringsData(rings);
+    }
+
+    // ============================================================
+    // 8. Fetcher — dedupe per source then dispatch to extractors
+    // ============================================================
+    async function fetchSource(src) {
+      try {
+        const r = await fetch(`/api/feed?source=${src}`, { cache: 'no-cache' });
+        if (!r.ok) {
+          console.warn(`[${src}] HTTP ${r.status}`);
+          return null;
+        }
+        return await r.json();
+      } catch (e) {
+        console.error(`[${src}] fetch error`, e);
+        return null;
+      }
+    }
+
+    async function refresh(source) {
+      const raw = await fetchSource(source);
+      if (!raw) return;
+      const out = EXTRACT[source](raw);
+
+      // Dispatch by layer-key:
+      //  - earthquakes / aircraft → out is a flat array
+      //  - events → out is a {wildfires, volcanoes, severeStorms, floods} bucket
+      for (const [key, layer] of Object.entries(LAYERS)) {
+        if (layer.source !== source) continue;
+        if (source === 'events') {
+          state[key].data = out[layer.category] || [];
+        } else {
+          state[key].data = out;
+        }
+      }
+
+      updateLegend();
+      compose();
+
+      const t = new Date();
+      document.getElementById('last-refresh').textContent =
+        `Updated ${t.toUTCString().split(' ')[4]} UTC`;
+      document.getElementById('boot').classList.add('hide');
+      setTimeout(() => document.getElementById('boot').style.display = 'none', 1200);
+    }
+
+    function startScheduler() {
+      SOURCES.forEach(src => {
+        refresh(src);
+        setInterval(() => refresh(src), REFRESH_MS[src] || 120_000);
+      });
+    }
+
+    // ============================================================
+    // 9. Legend (toggleable per layer)
+    // ============================================================
+    const legendEl = document.getElementById('legend');
+    function renderLegend() {
+      legendEl.innerHTML = '';
+      for (const [key, layer] of Object.entries(LAYERS)) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.dataset.key = key;
+        row.innerHTML = `
+          <span class="count" data-count></span>
+          <span class="label">${layer.label}</span>
+          <span class="dot" style="background:${layer.color};color:${layer.color};"></span>
+        `;
+        row.addEventListener('click', () => {
+          state[key].visible = !state[key].visible;
+          row.classList.toggle('off', !state[key].visible);
+          compose();
+        });
+        legendEl.appendChild(row);
+      }
+    }
+    function updateLegend() {
+      for (const key of Object.keys(LAYERS)) {
+        const row = legendEl.querySelector(`[data-key="${key}"]`);
+        if (!row) continue;
+        row.querySelector('[data-count]').textContent =
+          state[key].data.length.toLocaleString();
+        row.classList.toggle('off', !state[key].visible);
+      }
+    }
+
+    // ============================================================
+    // 10. Status line (bottom-left)
+    // ============================================================
+    function updateStatusLoop() {
+      const c = name => state[name].data.length;
+      document.getElementById('status').innerHTML =
+        `<b>${c('earthquakes')}</b> earthquakes &nbsp;·&nbsp; ` +
+        `<b>${c('fires')}</b> fires &nbsp;·&nbsp; ` +
+        `<b>${c('volcanoes')}</b> volcanoes<br>` +
+        `<b>${c('storms')}</b> storms &nbsp;·&nbsp; ` +
+        `<b>${c('floods')}</b> floods &nbsp;·&nbsp; ` +
+        `<b>${c('aircraft').toLocaleString()}</b> aircraft live`;
+      requestAnimationFrame(updateStatusLoop);
+    }
+
+    // ============================================================
+    // Boot
+    // ============================================================
+    renderLegend();
+    updateStatusLoop();
+    startScheduler();
+  </script>
+</body>
+</html>
