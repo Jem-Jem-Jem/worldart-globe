@@ -5,7 +5,9 @@
 // Edge runtime keeps cold starts near-zero. Cache headers are set
 // generously so we stay within the public sources' rate limits.
 
-export const config = { runtime: 'edge' };
+// Switched to Node.js serverless runtime (AWS Lambda IPs) instead of Edge
+// (Cloudflare IPs) because OpenSky blocks most Cloudflare egress ranges.
+export const config = { runtime: 'nodejs' };
 
 const SOURCES = {
   // USGS Earthquake Hazards Program — last 24 h, all magnitudes
@@ -70,6 +72,36 @@ async function getOpenSkyToken() {
 export default async function handler(req) {
   const url    = new URL(req.url);
   const source = url.searchParams.get('source');
+
+  // Debug mode: ?source=aircraft&debug=1
+  // Shows whether env vars are loaded and whether the token exchange works.
+  if (source === 'aircraft' && url.searchParams.get('debug') === '1') {
+    const clientId     = (process.env.OPENSKY_CLIENT_ID     ?? '').trim();
+    const clientSecret = (process.env.OPENSKY_CLIENT_SECRET ?? '').trim();
+    const hasId  = clientId.length > 0;
+    const hasSec = clientSecret.length > 0;
+    let tokenResult = 'not attempted (missing credentials)';
+    if (hasId && hasSec) {
+      try {
+        const tr = await fetch(
+          'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':  'application/x-www-form-urlencoded',
+              'Authorization': 'Basic ' + btoa(`${clientId}:${clientSecret}`),
+            },
+            body:   'grant_type=client_credentials',
+            signal: AbortSignal.timeout(8000),
+          },
+        );
+        tokenResult = `HTTP ${tr.status} — ${await tr.text()}`;
+      } catch (e) {
+        tokenResult = `fetch error: ${e}`;
+      }
+    }
+    return json({ hasClientId: hasId, hasClientSecret: hasSec, tokenResult });
+  }
 
   if (!source || !(source in SOURCES)) {
     return json({
