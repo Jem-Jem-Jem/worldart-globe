@@ -25,9 +25,12 @@ const SOURCES = {
     ttl: 600,   // EONET refreshes on slow cadence
   },
   // OpenSky Network — all active aircraft states (positional)
+  // Anonymous access is heavily rate-limited and often blocked on cloud IPs.
+  // Set OPENSKY_USER + OPENSKY_PASS env vars (free account at opensky-network.org)
+  // to use authenticated access (10× higher rate limit, no IP blocking).
   aircraft: {
     url: 'https://opensky-network.org/api/states/all',
-    ttl: 30,    // hammered at full rate is rude; 30s edge cache is friendly
+    ttl: 30,    // 30s edge cache keeps us friendly with upstream
   },
 };
 
@@ -44,14 +47,32 @@ export default async function handler(req) {
 
   const { url: upstream, ttl } = SOURCES[source];
 
+  // Build request headers — add Basic auth for OpenSky if credentials are set
+  const reqHeaders = {
+    'User-Agent': 'worldart-globe/1.0 (non-commercial open-source)',
+    'Accept': 'application/json,application/geo+json',
+  };
+
+  if (source === 'aircraft') {
+    const user = globalThis.process?.env?.OPENSKY_USER ?? '';
+    const pass = globalThis.process?.env?.OPENSKY_PASS ?? '';
+    if (user && pass) {
+      reqHeaders['Authorization'] = 'Basic ' + btoa(`${user}:${pass}`);
+    }
+  }
+
   try {
     const resp = await fetch(upstream, {
-      headers: {
-        'User-Agent': 'worldart-globe/1.0 (https://github.com/koala73/worldmonitor inspired)',
-        'Accept': 'application/json,application/geo+json',
-      },
+      headers: reqHeaders,
       cf: { cacheTtl: ttl },
+      signal: AbortSignal.timeout(8000),   // don't hang longer than 8s
     });
+
+    // OpenSky returns 429 when rate-limited — surface a clean empty payload
+    // rather than letting the globe show a broken state.
+    if (source === 'aircraft' && (resp.status === 429 || resp.status === 403)) {
+      return json({ states: [], time: Date.now() / 1000, _limited: true }, 200);
+    }
 
     const body = await resp.text();
     return new Response(body, {
@@ -65,6 +86,11 @@ export default async function handler(req) {
       },
     });
   } catch (err) {
+    // Network-level failure (timeout, DNS, IP block) — return empty aircraft
+    // payload so the globe continues to render the other layers normally.
+    if (source === 'aircraft') {
+      return json({ states: [], time: Date.now() / 1000, _error: String(err) }, 200);
+    }
     return json({ error: 'Upstream fetch failed', detail: String(err), upstream }, 502);
   }
 }
