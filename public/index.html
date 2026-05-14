@@ -262,7 +262,7 @@
     const REFRESH_MS = {
       earthquakes: 60_000,
       events:      300_000,
-      aircraft:    30_000,
+      aircraft:    120_000,  // 2-min — stays within OpenSky anonymous 400 req/day limit
     };
 
     // ============================================================
@@ -464,8 +464,14 @@
     // 8. Fetcher — dedupe per source then dispatch to extractors
     // ============================================================
     async function fetchSource(src) {
+      // Aircraft: call OpenSky directly from the browser — they have CORS enabled
+      // and work fine from residential IPs. Vercel's cloud IPs are blocked by OpenSky,
+      // so going client-side bypasses that entirely.
+      const url = src === 'aircraft'
+        ? 'https://opensky-network.org/api/states/all'
+        : `/api/feed?source=${src}`;
       try {
-        const r = await fetch(`/api/feed?source=${src}`, { cache: 'no-cache' });
+        const r = await fetch(url, { cache: 'no-cache' });
         if (!r.ok) {
           console.warn(`[${src}] HTTP ${r.status}`);
           return null;
