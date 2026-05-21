@@ -38,21 +38,23 @@
     }
 
     /* Data markers (globe.gl htmlElements) */
+    /* NOTE: globe.gl rewrites each marker's `transform` every animation frame to
+       keep it pinned to the globe. Never put a CSS `transition`/`filter` on the
+       marker root or the compositor re-tweens/re-paints every node every frame
+       (severe jank). Keep effects on the inner <svg> and scope them to hover. */
     .marker {
       pointer-events: auto; cursor: pointer;
       display: grid; place-items: center;
-      filter: drop-shadow(0 0 5px currentColor);
-      transition: transform 0.15s;
     }
-    .marker svg { width: 100%; height: 100%; display: block; }
-    .marker:hover { transform: scale(1.35); z-index: 50; }
-    .marker.pulse { animation: mpulse 1.8s ease-in-out infinite; }
-    .marker.alert { animation: malert 0.8s ease-in-out infinite; }
-    @keyframes mpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
-    @keyframes malert {
-      0%,100% { filter: drop-shadow(0 0 4px currentColor); }
-      50%     { filter: drop-shadow(0 0 12px currentColor) brightness(1.8); }
+    .marker svg {
+      width: 100%; height: 100%; display: block;
+      filter: drop-shadow(0 0 2px currentColor);
     }
+    .marker:hover svg { filter: drop-shadow(0 0 7px currentColor) brightness(1.4); }
+    .marker.pulse svg { animation: mpulse 2.6s ease-in-out infinite; }
+    .marker.alert svg { animation: malert 0.9s ease-in-out infinite; }
+    @keyframes mpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    @keyframes malert { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
     /* HUD overlays */
     .hud {
@@ -285,7 +287,7 @@
         label: 'QUAKES', group: 'hazards', icon: ICON.quake,
         color: '#6cdfff', source: 'earthquakes',
         size:     d => 14 + Math.max(0, (d.magnitude || 1)) * 3.5,
-        altitude: d => Math.max(0.005, (d.magnitude || 1) / 14),
+        altitude: () => 0.01,
         ringIf:   d => (d.magnitude || 0) >= 4.5,
         ringMaxR: d => Math.max(2, (d.magnitude || 0) * 0.8),
       },
@@ -324,14 +326,14 @@
       aircraft: {
         label: 'AIRCRAFT', group: 'air', icon: ICON.plane, live: true,
         color: '#ffffff', source: 'aircraft',
-        size: () => 15, altitude: d => Math.min(0.14, ((d.altitude || 0) / 14000) * 0.14),
+        size: () => 15, altitude: d => Math.min(0.05, 0.01 + ((d.altitude || 0) / 12000) * 0.035),
         rotate: d => d.heading, alert: d => !!d.emergency,
         ringIf: d => !!d.emergency, ringMaxR: () => 2,
       },
       military: {
         label: 'MILITARY', group: 'air', icon: ICON.mil, live: true,
         color: '#b0ff70', source: 'military',
-        size: () => 17, altitude: d => Math.min(0.14, ((d.altitude || 0) / 14000) * 0.14),
+        size: () => 17, altitude: d => Math.min(0.05, 0.01 + ((d.altitude || 0) / 12000) * 0.035),
         rotate: d => d.heading, ringIf: () => false,
       },
       // ---- Sea (live only) ----
@@ -349,7 +351,7 @@
       sea:      { label: 'Sea',      keys: ['ships'] },
     };
 
-    const MAX_MARKERS = { aircraft: 400, military: 250, ships: 400, conflict: 300, default: 600 };
+    const MAX_MARKERS = { aircraft: 150, military: 100, ships: 150, conflict: 120, default: 150 };
 
     // ============================================================
     // 2. Sources + polling cadence
@@ -452,8 +454,8 @@
     // ============================================================
     // 5. Globe setup
     // ============================================================
-    const NIGHT_TEX = '//unpkg.com/three-globe/example/img/earth-night.jpg';
-    const DAY_TEX   = '//unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+    const NIGHT_TEX = 'https://cdn.jsdelivr.net/npm/three-globe@2/example/img/earth-night.jpg';
+    const DAY_TEX   = 'https://cdn.jsdelivr.net/npm/three-globe@2/example/img/earth-blue-marble.jpg';
 
     // Phase B — NASA GIBS zoomable satellite tiles (keyless, CORS-open WMTS REST).
     // VIIRS daily True Color tops out at GoogleMapsCompatible_Level9 (~250 m).
@@ -483,7 +485,7 @@
 
     const globe = Globe({ animateIn: true })
       .globeImageUrl(NIGHT_TEX)
-      .bumpImageUrl ('//unpkg.com/three-globe/example/img/earth-topology.png')
+      .bumpImageUrl ('https://cdn.jsdelivr.net/npm/three-globe@2/example/img/earth-topology.png')
       .backgroundColor('rgba(0,0,0,0)')
       .showAtmosphere(true)
       .atmosphereColor('#4080ff')
@@ -582,7 +584,9 @@
         if (layer.live && timeMode !== 'live') continue;      // live layers hide during playback
         let data = state[key].data;
         const cap = MAX_MARKERS[key] || MAX_MARKERS.default;
-        if (data.length > cap) data = data.slice(0, cap);
+        if (data.length > cap) {
+          data = [...data].sort((a, b) => layer.size(b) - layer.size(a)).slice(0, cap);
+        }
         for (const p of data) {
           if (p.lat == null || p.lon == null) continue;
           markers.push({
