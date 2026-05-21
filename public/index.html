@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>World Globe — Live Planetary Intelligence</title>
-  <meta name="description" content="A live 3D globe of earthquakes, wildfires, volcanoes, storms, floods and live air traffic. Inspired by worldmonitor.app." />
+  <meta name="description" content="A live 3D globe of earthquakes, wildfires, volcanoes, storms, floods, live air & sea traffic, and open-source conflict intelligence." />
 
   <style>
     :root {
@@ -14,6 +14,9 @@
       --c-storm:    #ff44cc;
       --c-flood:    #3a82ff;
       --c-aircraft: #ffffff;
+      --c-military: #b0ff70;
+      --c-ship:     #19e6c8;
+      --c-conflict: #ff3b3b;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
@@ -21,7 +24,6 @@
 
     #globe { position: fixed; inset: 0; }
 
-    /* Background — deep-space gradient + faint star noise */
     #bg {
       position: fixed; inset: 0; z-index: -2;
       background:
@@ -32,9 +34,24 @@
     #stars {
       position: fixed; inset: 0; z-index: -1;
       background-image: radial-gradient(rgba(255,255,255,0.5) 0.5px, transparent 0.5px);
-      background-size: 80px 80px;
-      opacity: 0.35;
-      mix-blend-mode: screen;
+      background-size: 80px 80px; opacity: 0.35; mix-blend-mode: screen;
+    }
+
+    /* Data markers (globe.gl htmlElements) */
+    .marker {
+      pointer-events: auto; cursor: pointer;
+      display: grid; place-items: center;
+      filter: drop-shadow(0 0 5px currentColor);
+      transition: transform 0.15s;
+    }
+    .marker svg { width: 100%; height: 100%; display: block; }
+    .marker:hover { transform: scale(1.35); z-index: 50; }
+    .marker.pulse { animation: mpulse 1.8s ease-in-out infinite; }
+    .marker.alert { animation: malert 0.8s ease-in-out infinite; }
+    @keyframes mpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+    @keyframes malert {
+      0%,100% { filter: drop-shadow(0 0 4px currentColor); }
+      50%     { filter: drop-shadow(0 0 12px currentColor) brightness(1.8); }
     }
 
     /* HUD overlays */
@@ -45,15 +62,8 @@
     }
     .hud--tl { top: 22px; left: 26px; max-width: 50%; }
     .hud--tr { top: 22px; right: 26px; text-align: right; }
-    .hud--bl { bottom: 24px; left: 26px; max-width: 50%; }
+    .hud--bl { bottom: 24px; left: 26px; max-width: 46%; }
     .hud--br { bottom: 24px; right: 26px; text-align: right; max-width: 50%; }
-    @media (max-width: 720px) {
-      .hud--tl { max-width: 60%; }
-      .title { font-size: 9px !important; letter-spacing: 0.18em !important; }
-      .subtitle { font-size: 7px !important; }
-      .legend { font-size: 9px !important; }
-      .status, .attrib { font-size: 8px !important; }
-    }
 
     .title {
       font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase;
@@ -66,27 +76,33 @@
     .pulse {
       display: inline-block; width: 6px; height: 6px; border-radius: 50%;
       background: #6cdfff; margin-right: 8px; vertical-align: middle;
-      animation: blink 2s ease-in-out infinite;
-      box-shadow: 0 0 8px #6cdfff;
+      animation: blink 2s ease-in-out infinite; box-shadow: 0 0 8px #6cdfff;
     }
     @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
 
-    /* Legend / toggles */
-    .legend { font-size: 10px; line-height: 1.95; letter-spacing: 0.08em; pointer-events: auto; }
+    /* Grouped legend / toggles */
+    .legend { font-size: 10px; letter-spacing: 0.08em; pointer-events: auto; }
+    .legend .group { margin-bottom: 9px; }
+    .legend .ghead {
+      display: flex; align-items: center; justify-content: flex-end; gap: 7px;
+      cursor: pointer; user-select: none;
+      font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
+      color: rgba(255,255,255,0.45); margin-bottom: 2px;
+    }
+    .legend .ghead:hover { color: #fff; }
+    .legend .ghead .chev { font-size: 8px; opacity: 0.6; width: 9px; }
+    .legend .group.collapsed .rows { display: none; }
     .legend .row {
       display: flex; align-items: center; gap: 8px; justify-content: flex-end;
-      cursor: pointer; user-select: none;
+      cursor: pointer; user-select: none; line-height: 1.85;
       opacity: 1; transition: opacity 0.2s;
     }
     .legend .row.off { opacity: 0.3; }
     .legend .row:hover { color: #fff; }
-    .legend .dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      box-shadow: 0 0 6px currentColor;
-    }
+    .legend .ico { width: 13px; height: 13px; color: inherit; filter: drop-shadow(0 0 4px currentColor); }
+    .legend .ico svg { width: 100%; height: 100%; display: block; }
     .legend .count {
-      color: rgba(255, 255, 255, 0.45);
-      min-width: 44px; text-align: right;
+      color: rgba(255, 255, 255, 0.45); min-width: 44px; text-align: right;
       font-variant-numeric: tabular-nums;
     }
     .legend .label { text-transform: uppercase; }
@@ -106,15 +122,10 @@
       color: var(--accent, #6cdfff);
     }
     .tip .t-place { font-weight: 600; margin-top: 3px; }
-    .tip .t-meta {
-      color: rgba(255, 255, 255, 0.55); font-size: 10px; margin-top: 4px;
-    }
+    .tip .t-meta { color: rgba(255, 255, 255, 0.55); font-size: 10px; margin-top: 4px; }
 
     /* Status line */
-    .status {
-      font-size: 10px; line-height: 1.7; letter-spacing: 0.05em;
-      color: rgba(255, 255, 255, 0.5);
-    }
+    .status { font-size: 10px; line-height: 1.7; letter-spacing: 0.05em; color: rgba(255, 255, 255, 0.5); }
     .status b { color: rgba(255, 255, 255, 0.9); font-weight: normal; }
 
     /* Attribution */
@@ -128,26 +139,60 @@
     }
     .attrib a:hover { color: #fff; }
 
-    /* Boot screen */
+    /* Bottom control bar */
+    .controls {
+      position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      justify-content: center; pointer-events: auto; z-index: 60; max-width: 92vw;
+    }
+    .controls .seg {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(8, 10, 22, 0.7); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+      padding: 6px 9px;
+    }
+    .btn {
+      font: inherit; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+      color: rgba(255,255,255,0.7); background: transparent;
+      border: 1px solid rgba(255,255,255,0.16); border-radius: 4px;
+      padding: 5px 9px; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    }
+    .btn:hover { color: #fff; border-color: rgba(255,255,255,0.4); }
+    .btn.active { color: #051018; background: #6cdfff; border-color: #6cdfff; }
+    .search { display: flex; align-items: center; gap: 0; }
+    .search input {
+      font: inherit; font-size: 10px; color: #fff; background: transparent;
+      border: none; outline: none; width: 130px;
+    }
+    .search input::placeholder { color: rgba(255,255,255,0.35); letter-spacing: 0.1em; }
+    .time { display: flex; align-items: center; gap: 9px; min-width: 320px; }
+    .time input[type=range] { flex: 1; accent-color: #6cdfff; cursor: pointer; }
+    .time .tlabel {
+      font-size: 9px; letter-spacing: 0.12em; color: rgba(255,255,255,0.7);
+      min-width: 92px; text-align: center; font-variant-numeric: tabular-nums;
+    }
+    .time .tlabel.past { color: #ffd400; }
+
+    @media (max-width: 720px) {
+      .hud--tl { max-width: 60%; }
+      .title { font-size: 9px; letter-spacing: 0.18em; }
+      .subtitle { font-size: 7px; }
+      .legend { font-size: 9px; }
+      .status, .attrib { font-size: 8px; }
+      .time { min-width: 200px; }
+      .search input { width: 90px; }
+    }
+
+    /* Boot */
     .boot {
       position: fixed; inset: 0; display: grid; place-items: center;
-      background: #000; z-index: 200; transition: opacity 0.6s ease 0.2s;
-      pointer-events: none;
+      background: #000; z-index: 200; transition: opacity 0.6s ease 0.2s; pointer-events: none;
     }
     .boot.hide { opacity: 0; }
     .boot .b-inner { text-align: center; color: rgba(255, 255, 255, 0.6); }
-    .boot .b-title {
-      font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase;
-    }
-    .boot .b-sub {
-      margin-top: 8px; font-size: 9px; letter-spacing: 0.2em;
-      color: rgba(255, 255, 255, 0.25); text-transform: uppercase;
-    }
-    .boot .b-bar {
-      margin-top: 16px; width: 240px; height: 1px;
-      background: rgba(255, 255, 255, 0.1); position: relative;
-      overflow: hidden;
-    }
+    .boot .b-title { font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; }
+    .boot .b-sub { margin-top: 8px; font-size: 9px; letter-spacing: 0.2em; color: rgba(255, 255, 255, 0.25); text-transform: uppercase; }
+    .boot .b-bar { margin-top: 16px; width: 240px; height: 1px; background: rgba(255, 255, 255, 0.1); position: relative; overflow: hidden; }
     .boot .b-bar::after {
       content: ''; position: absolute; left: 0; top: 0; height: 100%; width: 30%;
       background: linear-gradient(90deg, transparent, #6cdfff, transparent);
@@ -163,7 +208,7 @@
 
   <div class="hud hud--tl">
     <div class="title"><span class="pulse"></span>World Globe — Live Planetary Intelligence</div>
-    <div class="subtitle">USGS · NASA EONET · OpenSky Network</div>
+    <div class="subtitle">USGS · NASA · ADS-B · AIS · GDELT · DeepState</div>
   </div>
 
   <div class="hud hud--tr">
@@ -176,9 +221,26 @@
 
   <div class="hud hud--br">
     <div class="attrib">
-      Concept &amp; aggregation inspired by
+      Concept inspired by
       <a href="https://worldmonitor.app/" target="_blank" rel="noopener">worldmonitor.app</a><br/>
       <span id="last-refresh" style="opacity: 0.7">—</span>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="seg time">
+      <button id="live-btn" class="btn active" title="Return to realtime">LIVE</button>
+      <input id="time-range" type="range" min="-30" max="0" step="1" value="0" />
+      <span id="time-label" class="tlabel">NOW</span>
+    </div>
+    <div class="seg">
+      <button id="base-btn"  class="btn" title="Toggle satellite / night surface">SATELLITE</button>
+      <button id="bord-btn"  class="btn" title="Country borders">BORDERS</button>
+      <button id="term-btn"  class="btn" title="Day / night terminator">DAY·NIGHT</button>
+      <button id="meas-btn"  class="btn" title="Measure distance between two points">MEASURE</button>
+    </div>
+    <div class="seg search">
+      <input id="search-input" type="text" placeholder="SEARCH PLACE…" />
     </div>
   </div>
 
@@ -200,69 +262,106 @@
     import Globe from 'https://esm.sh/globe.gl@2.34.0?bundle';
 
     // ============================================================
-    // 1. Layer configuration — visual style per data category
+    // 0. Icon glyphs — distinct shape per data type (currentColor)
+    // ============================================================
+    const ICON = {
+      quake: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><path d="M5 12a7 7 0 0 1 14 0M2.5 12a9.5 9.5 0 0 1 19 0"/></svg>`,
+      fire:  `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-2 4-2 7a2 2 0 0 0 4 0c2 2 3 4 3 7a5 5 0 0 1-10 0c0-4 3-5 5-14z"/></svg>`,
+      volcano: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M9 9 3 21h18L15 9z" fill="currentColor"/><path d="M9.5 9 12 3l2.5 6"/></svg>`,
+      storm: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4a8 8 0 1 1-6 13"/><path d="M12 20a8 8 0 0 1-6-13"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>`,
+      flood: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 9c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2M2 15c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/></svg>`,
+      plane: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2 8 7 4v2l-9-2.5L12 22l-2 0 1-8.5L2 16v-2l7-4 1-8z"/></svg>`,
+      mil:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l1.4 5.6L19 13v1.4l-6.2-1.8L12 19h-0l-0.8-6.4L5 14.4V13l5.6-2.4z" fill="currentColor" stroke="none"/><rect x="3.5" y="3.5" width="17" height="17" transform="rotate(45 12 12)"/></svg>`,
+      ship:  `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2 4v3l4 1v3l-6-1.5L6 16v-3l4-1V6z"/><path d="M5 17c1.5 1 2.5 1 4 0s2.5-1 4 0 2.5 1 4 0v3c-1.5 1-2.5 1-4 0s-2.5-1-4 0-2.5 1-4 0z"/></svg>`,
+      burst: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5"><path d="M12 2l2.2 5.5L20 6l-3 4.5L22 13l-5.6.6L17 19l-5-3-5 3 .6-5.4L2 13l5-2.5L4 6l5.8 1.5z"/></svg>`,
+    };
+
+    // ============================================================
+    // 1. Layer configuration — visual style + grouping per category
     // ============================================================
     const LAYERS = {
+      // ---- Hazards (time-capable: earthquakes via FDSN, EONET via date) ----
       earthquakes: {
-        label: 'QUAKES',
+        label: 'QUAKES', group: 'hazards', icon: ICON.quake,
         color: '#6cdfff', source: 'earthquakes',
-        radius:   d => 0.16 + Math.max(0, (d.magnitude || 1)) * 0.07,
+        size:     d => 14 + Math.max(0, (d.magnitude || 1)) * 3.5,
         altitude: d => Math.max(0.005, (d.magnitude || 1) / 14),
         ringIf:   d => (d.magnitude || 0) >= 4.5,
         ringMaxR: d => Math.max(2, (d.magnitude || 0) * 0.8),
       },
       fires: {
-        label: 'FIRES',
+        label: 'FIRES', group: 'hazards', icon: ICON.fire,
         color: '#ff6020', source: 'events', category: 'wildfires',
-        radius:   () => 0.28,
-        altitude: () => 0.01,
-        ringIf:   () => true,  // every fire gets a small pulse so the layer is readable
-        ringMaxR: () => 1.2,
+        size: () => 17, altitude: () => 0.01, pulse: () => true,
+        ringIf: () => true, ringMaxR: () => 1.2,
       },
       volcanoes: {
-        label: 'VOLCANOES',
+        label: 'VOLCANOES', group: 'hazards', icon: ICON.volcano,
         color: '#ffd400', source: 'events', category: 'volcanoes',
-        radius:   () => 0.22,
-        altitude: () => 0.015,
-        ringIf:   () => true,
-        ringMaxR: () => 3,
+        size: () => 19, altitude: () => 0.015, pulse: () => true,
+        ringIf: () => true, ringMaxR: () => 3,
       },
       storms: {
-        label: 'STORMS',
+        label: 'STORMS', group: 'hazards', icon: ICON.storm,
         color: '#ff44cc', source: 'events', category: 'severeStorms',
-        radius:   () => 0.30,
-        altitude: () => 0.020,
-        ringIf:   () => true,
-        ringMaxR: () => 5,
+        size: () => 20, altitude: () => 0.02, pulse: () => true,
+        ringIf: () => true, ringMaxR: () => 5,
       },
       floods: {
-        label: 'FLOODS',
+        label: 'FLOODS', group: 'hazards', icon: ICON.flood,
         color: '#3a82ff', source: 'events', category: 'floods',
-        radius:   () => 0.20,
-        altitude: () => 0.008,
-        ringIf:   () => false,
+        size: () => 17, altitude: () => 0.008, ringIf: () => false,
       },
+      // ---- Conflict / OSINT ----
+      conflict: {
+        label: 'CONFLICT', group: 'conflict', icon: ICON.burst,
+        color: '#ff3b3b', source: 'gdelt',
+        size:     d => 15 + Math.min(10, Math.log10((d.count || 1) + 1) * 6),
+        altitude: () => 0.012, pulse: () => true,
+        ringIf:   d => (d.count || 0) >= 5, ringMaxR: () => 2.5,
+      },
+      // ---- Air (live only) ----
       aircraft: {
-        label: 'AIRCRAFT',
-        // Soft luminous white — translucent so fires/quakes underneath stay legible.
-        color: 'rgba(255, 255, 255, 0.55)', source: 'aircraft',
-        // Aircraft rendered as small elevated dots — altitude mapped from
-        // real flight level, tiny radius keeps them dotty rather than pillarlike.
-        radius:   d => 0.025,
-        altitude: d => Math.min(0.14, ((d.altitude || 0) / 14000) * 0.14),
-        ringIf:   () => false,
+        label: 'AIRCRAFT', group: 'air', icon: ICON.plane, live: true,
+        color: '#ffffff', source: 'aircraft',
+        size: () => 15, altitude: d => Math.min(0.14, ((d.altitude || 0) / 14000) * 0.14),
+        rotate: d => d.heading, alert: d => !!d.emergency,
+        ringIf: d => !!d.emergency, ringMaxR: () => 2,
+      },
+      military: {
+        label: 'MILITARY', group: 'air', icon: ICON.mil, live: true,
+        color: '#b0ff70', source: 'military',
+        size: () => 17, altitude: d => Math.min(0.14, ((d.altitude || 0) / 14000) * 0.14),
+        rotate: d => d.heading, ringIf: () => false,
+      },
+      // ---- Sea (live only) ----
+      ships: {
+        label: 'SHIPS', group: 'sea', icon: ICON.ship, live: true,
+        color: '#19e6c8', source: 'ships',
+        size: () => 15, altitude: () => 0.004, rotate: d => d.heading, ringIf: () => false,
       },
     };
 
-    // ============================================================
-    // 2. Source-fetch dedup — multiple layers can share one source
-    // ============================================================
-    const SOURCES = [...new Set(Object.values(LAYERS).map(l => l.source))];
+    const GROUPS = {
+      hazards:  { label: 'Hazards',  keys: ['earthquakes', 'fires', 'volcanoes', 'storms', 'floods'] },
+      conflict: { label: 'Conflict', keys: ['conflict'] },
+      air:      { label: 'Air',      keys: ['aircraft', 'military'] },
+      sea:      { label: 'Sea',      keys: ['ships'] },
+    };
 
+    const MAX_MARKERS = { aircraft: 400, military: 250, ships: 400, conflict: 300, default: 600 };
+
+    // ============================================================
+    // 2. Sources + polling cadence
+    // ============================================================
     const REFRESH_MS = {
       earthquakes: 60_000,
       events:      300_000,
-      aircraft:    120_000,  // 2-min — stays within OpenSky anonymous 400 req/day limit
+      gdelt:       900_000,
+      aircraft:    20_000,
+      military:    30_000,
+      ships:       90_000,
+      deepstate:   3_600_000,
     };
 
     // ============================================================
@@ -274,58 +373,70 @@
           const [lon, lat, depth] = f.geometry?.coordinates || [];
           const p = f.properties || {};
           return {
-            lat, lon, depth,
-            magnitude: p.mag,
-            place:     p.place || 'Unknown',
-            time:      p.time,
-            type:      `Magnitude ${(p.mag ?? 0).toFixed(1)} earthquake`,
+            lat, lon, depth, magnitude: p.mag,
+            place: p.place || 'Unknown', time: p.time,
+            type: `Magnitude ${(p.mag ?? 0).toFixed(1)} earthquake`,
           };
         });
       },
-      // EONET v3 — returns one structure shared across fires/volcanoes/storms/floods.
-      // The extractor stashes events keyed by category so layers can pull their share.
       events(resp) {
         const buckets = { wildfires: [], volcanoes: [], severeStorms: [], floods: [] };
         for (const e of (resp.events || [])) {
           const catId = e.categories?.[0]?.id;
           if (!(catId in buckets)) continue;
-          const geom  = e.geometry?.[e.geometry.length - 1];   // latest position
+          const geom  = e.geometry?.[e.geometry.length - 1];
           const coords = geom?.coordinates;
           if (!Array.isArray(coords) || coords.length < 2) continue;
           let lon, lat;
-          // EONET sometimes uses Polygon (array of arrays). Take centroid (first point).
           if (typeof coords[0] === 'number')      [lon, lat] = coords;
           else if (Array.isArray(coords[0][0]))   [lon, lat] = coords[0][0];
           else                                    [lon, lat] = coords[0];
           buckets[catId].push({
-            lat, lon,
-            place:     e.title || e.categories[0].title,
-            time:      Date.parse(geom.date),
-            type:      e.categories[0].title,
-            magnitude: geom.magnitudeValue,
-            category:  catId,
+            lat, lon, place: e.title || e.categories[0].title,
+            time: Date.parse(geom.date), type: e.categories[0].title,
+            magnitude: geom.magnitudeValue, category: catId,
           });
         }
         return buckets;
       },
-      aircraft(resp) {
-        // OpenSky returns positional arrays:
-        //   [icao24, callsign, country, time_pos, last_contact,
-        //    lon, lat, baro_alt, on_ground, velocity, heading, ...]
-        return (resp.states || []).filter(s => s[5] != null && s[6] != null)
-          .map(s => ({
-            lat:      s[6],
-            lon:      s[5],
-            icao:     s[0],
-            callsign: (s[1] || '').trim(),
-            country:  s[2],
-            altitude: s[7],
-            onGround: s[8],
-            velocity: s[9],
-            heading:  s[10],
-            place:    `${(s[1] || s[0]).trim()} · ${s[2]}`,
-            type:     'Aircraft',
-          }));
+      // ADS-B Exchange v2 shape (adsb.lol / airplanes.live / adsb.one)
+      adsb(resp) {
+        return (resp.ac || resp.aircraft || []).filter(a => a.lat != null && a.lon != null)
+          .map(a => {
+            const sq = (a.squawk || '').toString();
+            const emergency = ['7500', '7600', '7700'].includes(sq);
+            return {
+              lat: a.lat, lon: a.lon, icao: a.hex,
+              callsign: (a.flight || '').trim(),
+              altitude: typeof a.alt_baro === 'number' ? a.alt_baro * 0.3048 : 0, // ft -> m
+              velocity: a.gs != null ? a.gs * 0.514444 : null,                    // kt -> m/s
+              heading: a.track, squawk: sq, emergency,
+              acType: a.t || a.desc || '',
+              place: `${(a.flight || a.hex || '').trim()}${a.t ? ' · ' + a.t : ''}`,
+              type: emergency
+                ? `Aircraft · SQUAWK ${sq} ${sq === '7500' ? 'HIJACK' : sq === '7600' ? 'RADIO FAIL' : 'EMERGENCY'}`
+                : 'Aircraft',
+            };
+          });
+      },
+      ships(resp) {
+        return (resp.ships || []).filter(s => s.lat != null && s.lon != null).map(s => ({
+          lat: s.lat, lon: s.lon, heading: s.heading,
+          velocity: s.speed != null ? s.speed * 0.514444 : null,
+          place: s.name || `MMSI ${s.mmsi}`, type: 'Vessel (AIS)',
+        }));
+      },
+      // GDELT GEO 2.0 PointData GeoJSON
+      gdelt(resp) {
+        return (resp.features || []).filter(f => f.geometry?.type === 'Point').map(f => {
+          const [lon, lat] = f.geometry.coordinates;
+          const p = f.properties || {};
+          return {
+            lat, lon, count: p.count || 1,
+            place: p.name || 'Reported location',
+            type: 'Conflict-related coverage (GDELT)',
+          };
+        });
       },
     };
 
@@ -334,38 +445,37 @@
     // ============================================================
     const state = {};
     Object.keys(LAYERS).forEach(k => state[k] = { data: [], visible: true });
+    let timeMode = 'live';          // 'live' or a Date (selected day)
+    const ui = { borders: false, terminator: false, satellite: false };
 
     // ============================================================
     // 5. Globe setup
     // ============================================================
+    const NIGHT_TEX = '//unpkg.com/three-globe/example/img/earth-night.jpg';
+    const DAY_TEX   = '//unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+
     const globe = Globe({ animateIn: true })
-      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
+      .globeImageUrl(NIGHT_TEX)
       .bumpImageUrl ('//unpkg.com/three-globe/example/img/earth-topology.png')
       .backgroundColor('rgba(0,0,0,0)')
       .showAtmosphere(true)
       .atmosphereColor('#4080ff')
       .atmosphereAltitude(0.20)
       .showGraticules(false)
-      .pointsMerge(false)
-      .pointAltitude('alt')
-      .pointRadius('r')
-      .pointColor('color')
-      .pointResolution(8)
-      .pointLabel(() => '')
-      .arcsTransitionDuration(600)
-      .arcStartLat('startLat').arcStartLng('startLng')
-      .arcEndLat  ('endLat'  ).arcEndLng  ('endLng')
-      .arcColor('color')
-      .arcAltitudeAutoScale(0.5)
-      .arcStroke(0.35)
-      .arcDashLength(0.4)
-      .arcDashGap(2)
-      .arcDashAnimateTime(2200)
+      .htmlElementsData([])
+      .htmlElement(makeMarker)
+      .htmlLat('lat').htmlLng('lng').htmlAltitude('alt')
       .ringLat('lat').ringLng('lon')
       .ringColor('color')
       .ringMaxRadius('maxR')
       .ringPropagationSpeed(2.2)
       .ringRepeatPeriod(1400)
+      .polygonsData([])
+      .polygonGeoJsonGeometry('geometry')
+      .polygonCapColor(f => f._cap || 'rgba(0,0,0,0)')
+      .polygonSideColor(f => f._side || 'rgba(0,0,0,0)')
+      .polygonStrokeColor(f => f._stroke || 'rgba(255,255,255,0.18)')
+      .polygonAltitude(f => f._alt ?? 0.006)
       (document.getElementById('globe'));
 
     globe.controls().autoRotate = true;
@@ -374,32 +484,45 @@
     globe.controls().dampingFactor = 0.08;
     globe.pointOfView({ lat: 20, lng: 10, altitude: 2.4 }, 0);
 
-    function resize() {
-      globe.width(window.innerWidth);
-      globe.height(window.innerHeight);
-    }
-    window.addEventListener('resize', resize);
-    resize();
+    function resize() { globe.width(window.innerWidth); globe.height(window.innerHeight); }
+    window.addEventListener('resize', resize); resize();
 
-    // Pause auto-rotation while user is interacting; resume after 4s idle
+    // Pause auto-rotation while interacting; resume after idle. Also refetch
+    // view-bounded layers (aircraft / ships) when the camera settles.
     let idleT;
     function bumpIdle() {
       globe.controls().autoRotate = false;
       clearTimeout(idleT);
-      idleT = setTimeout(() => { globe.controls().autoRotate = true; }, 4000);
+      idleT = setTimeout(() => {
+        globe.controls().autoRotate = true;
+        refreshViewBounded();
+      }, 1500);
     }
     ['mousedown', 'wheel', 'touchstart'].forEach(ev =>
-      document.getElementById('globe').addEventListener(ev, bumpIdle, { passive: true })
-    );
+      document.getElementById('globe').addEventListener(ev, bumpIdle, { passive: true }));
 
     // ============================================================
-    // 6. Tooltip
+    // 6. Marker factory + tooltip
     // ============================================================
+    function makeMarker(d) {
+      const el = document.createElement('div');
+      el.className = 'marker' + (d.pulse ? ' pulse' : '') + (d.alert ? ' alert' : '');
+      el.style.color = d.color;
+      el.style.width = el.style.height = d.size + 'px';
+      el.innerHTML = d.icon;
+      if (d.rotate != null && !Number.isNaN(d.rotate)) {
+        const svg = el.firstElementChild;
+        if (svg) svg.style.transform = `rotate(${d.rotate}deg)`;
+      }
+      el.addEventListener('mouseenter', () => showTip(d));
+      el.addEventListener('mouseleave', () => showTip(null));
+      return el;
+    }
+
     const tip   = document.getElementById('tip');
     const tType = document.getElementById('t-type');
     const tPlc  = document.getElementById('t-place');
     const tMeta = document.getElementById('t-meta');
-
     function showTip(d) {
       if (!d) { tip.style.display = 'none'; return; }
       tip.style.display = 'block';
@@ -408,101 +531,139 @@
       tType.style.color = d.color || '#6cdfff';
       tPlc.textContent  = d.place || '';
       const bits = [];
-      if (d.magnitude != null)        bits.push(`M${d.magnitude.toFixed(1)}`);
-      if (d.depth     != null)        bits.push(`${d.depth.toFixed(0)} km deep`);
-      if (d.altitude && d.altitude > 0) bits.push(`${Math.round(d.altitude*3.281).toLocaleString()} ft`);
-      if (d.velocity)                 bits.push(`${Math.round(d.velocity*1.944)} kt`);
-      if (d.country)                  bits.push(d.country);
-      if (d.time)                     bits.push(new Date(d.time).toUTCString().replace('GMT', 'UTC'));
+      if (d.magnitude != null)            bits.push(`M${d.magnitude.toFixed(1)}`);
+      if (d.depth     != null)            bits.push(`${d.depth.toFixed(0)} km deep`);
+      if (d.altitude  && d.altitude > 0)  bits.push(`${Math.round(d.altitude * 3.281).toLocaleString()} ft`);
+      if (d.velocity)                     bits.push(`${Math.round(d.velocity * 1.944)} kt`);
+      if (d.count)                        bits.push(`${d.count} reports`);
+      if (d.country)                      bits.push(d.country);
+      if (d.time)                         bits.push(new Date(d.time).toUTCString().replace('GMT', 'UTC'));
       tMeta.textContent = bits.join('  ·  ');
     }
-    globe.onPointHover(showTip);
     window.addEventListener('mousemove', e => {
-      tip.style.left = e.clientX + 'px';
-      tip.style.top  = e.clientY + 'px';
+      tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px';
     });
 
     // ============================================================
-    // 7. Compose all layers into globe primitives
+    // 7. Compose layers -> markers + rings (+ polygons handled separately)
     // ============================================================
     function compose() {
-      const points = [];
-      const arcs   = [];
-      const rings  = [];
-
+      const markers = [];
+      const rings   = [];
       for (const [key, layer] of Object.entries(LAYERS)) {
         if (!state[key].visible) continue;
-        const data = state[key].data;
-
+        if (layer.live && timeMode !== 'live') continue;      // live layers hide during playback
+        let data = state[key].data;
+        const cap = MAX_MARKERS[key] || MAX_MARKERS.default;
+        if (data.length > cap) data = data.slice(0, cap);
         for (const p of data) {
           if (p.lat == null || p.lon == null) continue;
-          points.push({
-            lat: p.lat, lng: p.lon,
-            r:    layer.radius(p),
-            alt:  layer.altitude(p),
-            color: layer.color,
+          markers.push({
+            lat: p.lat, lng: p.lon, alt: layer.altitude ? layer.altitude(p) : 0.01,
+            size: layer.size(p), color: layer.color, icon: layer.icon,
+            rotate: layer.rotate ? layer.rotate(p) : null,
+            pulse:  layer.pulse ? layer.pulse(p) : false,
+            alert:  layer.alert ? layer.alert(p) : false,
             place: p.place, type: p.type, time: p.time,
             magnitude: p.magnitude, depth: p.depth, country: p.country,
-            altitude: p.altitude, velocity: p.velocity,
+            altitude: p.altitude, velocity: p.velocity, count: p.count,
           });
-
           if (layer.ringIf && layer.ringIf(p)) {
-            rings.push({
-              lat: p.lat, lon: p.lon, color: layer.color,
-              maxR: (layer.ringMaxR ? layer.ringMaxR(p) : 3),
-            });
+            rings.push({ lat: p.lat, lon: p.lon, color: layer.color,
+              maxR: layer.ringMaxR ? layer.ringMaxR(p) : 3 });
           }
         }
       }
-
-      globe.pointsData(points);
-      globe.arcsData(arcs);
+      globe.htmlElementsData(markers);
       globe.ringsData(rings);
+      composePolygons();
     }
 
     // ============================================================
-    // 8. Fetcher — dedupe per source then dispatch to extractors
+    // 8. Polygons — country borders + DeepState frontline + terminator
     // ============================================================
-    async function fetchSource(src) {
-      // Aircraft: call OpenSky directly from the browser — they have CORS enabled
-      // and work fine from residential IPs. Vercel's cloud IPs are blocked by OpenSky,
-      // so going client-side bypasses that entirely.
-      const url = src === 'aircraft'
-        ? 'https://opensky-network.org/api/states/all'
-        : `/api/feed?source=${src}`;
+    let bordersGeo = null;     // cached Natural Earth features
+    let deepstateGeo = null;   // cached DeepState features
+    function composePolygons() {
+      const polys = [];
+      if (ui.borders && bordersGeo) {
+        for (const f of bordersGeo) polys.push({ geometry: f.geometry,
+          _cap: 'rgba(0,0,0,0)', _side: 'rgba(0,0,0,0)',
+          _stroke: 'rgba(120,200,255,0.35)', _alt: 0.005 });
+      }
+      if (state.conflict && state.conflict.visible && deepstateGeo) {
+        for (const f of deepstateGeo) polys.push({ geometry: f.geometry,
+          _cap: 'rgba(255,59,59,0.22)', _side: 'rgba(255,59,59,0.30)',
+          _stroke: 'rgba(255,90,90,0.7)', _alt: 0.008 });
+      }
+      if (ui.terminator) {
+        const t = terminatorPolygon();
+        if (t) polys.push({ geometry: t, _cap: 'rgba(0,4,18,0.55)',
+          _side: 'rgba(0,4,18,0.0)', _stroke: 'rgba(120,140,200,0.25)', _alt: 0.002 });
+      }
+      globe.polygonsData(polys);
+    }
+
+    // Night-hemisphere polygon: ring of points 90° from the subsolar point.
+    function terminatorPolygon() {
+      const now = new Date();
+      const rad = Math.PI / 180, deg = 180 / Math.PI;
+      const dayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      const dayOfYear = Math.floor((dayMs - Date.UTC(now.getUTCFullYear(), 0, 0)) / 86400000);
+      const decl = -23.44 * Math.cos(rad * (360 / 365) * (dayOfYear + 10));
+      const utcHours = now.getUTCHours() + now.getUTCMinutes() / 60;
+      const sunLng = -15 * (utcHours - 12);                 // subsolar longitude
+      const sunLat = decl;                                  // subsolar latitude
+      // antisolar point (centre of night hemisphere)
+      const cLat = -sunLat, cLng = sunLng + 180;
+      const ring = [];
+      for (let a = 0; a <= 360; a += 6) {
+        const brng = a * rad, d = 90 * rad, lat1 = cLat * rad, lon1 = cLng * rad;
+        const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng));
+        const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
+          Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
+        ring.push([((lon2 * deg + 540) % 360) - 180, lat2 * deg]);
+      }
+      return { type: 'Polygon', coordinates: [ring] };
+    }
+
+    // ============================================================
+    // 9. Fetching
+    // ============================================================
+    function timeParams() {
+      if (timeMode === 'live') return '';
+      const d = timeMode;
+      const from = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      const to   = new Date(from.getTime() + 86400000);
+      return `&from=${from.toISOString()}&to=${to.toISOString()}`;
+    }
+
+    async function fetchJSON(url) {
       try {
         const r = await fetch(url, { cache: 'no-cache' });
-        if (!r.ok) {
-          console.warn(`[${src}] HTTP ${r.status}`);
-          return null;
-        }
+        if (!r.ok) { console.warn(`[fetch] HTTP ${r.status} ${url}`); return null; }
         return await r.json();
-      } catch (e) {
-        console.error(`[${src}] fetch error`, e);
-        return null;
-      }
+      } catch (e) { console.warn('[fetch] error', url, e); return null; }
     }
 
-    async function refresh(source) {
-      const raw = await fetchSource(source);
-      if (!raw) return;
-      const out = EXTRACT[source](raw);
-
-      // Dispatch by layer-key:
-      //  - earthquakes / aircraft → out is a flat array
-      //  - events → out is a {wildfires, volcanoes, severeStorms, floods} bucket
-      for (const [key, layer] of Object.entries(LAYERS)) {
-        if (layer.source !== source) continue;
-        if (source === 'events') {
-          state[key].data = out[layer.category] || [];
-        } else {
-          state[key].data = out;
-        }
+    // ADS-B feeds: try browser-direct (residential IP), then proxy fallback.
+    const ADSB_FEEDS = ['https://api.adsb.lol', 'https://api.airplanes.live', 'https://api.adsb.one'];
+    async function fetchAircraft(lat, lon) {
+      for (const base of ADSB_FEEDS) {
+        const j = await fetchJSON(`${base}/v2/point/${lat.toFixed(3)}/${lon.toFixed(3)}/250`);
+        if (j && (j.ac || j.aircraft)) return j;
       }
+      return await fetchJSON(`/api/feed?source=aircraft&lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}&dist=250`);
+    }
+    async function fetchMilitary() {
+      for (const base of ADSB_FEEDS) {
+        const j = await fetchJSON(`${base}/v2/mil`);
+        if (j && (j.ac || j.aircraft)) return j;
+      }
+      return await fetchJSON('/api/feed?source=aircraft');
+    }
 
-      updateLegend();
-      compose();
-
+    function bumpStatus() {
       const t = new Date();
       document.getElementById('last-refresh').textContent =
         `Updated ${t.toUTCString().split(' ')[4]} UTC`;
@@ -510,63 +671,242 @@
       setTimeout(() => document.getElementById('boot').style.display = 'none', 1200);
     }
 
+    async function refresh(source) {
+      let out;
+      if (source === 'aircraft' || source === 'military') {
+        if (timeMode !== 'live') return;                    // live-only
+        const pov = globe.pointOfView();
+        const raw = source === 'aircraft'
+          ? await fetchAircraft(pov.lat, pov.lng)
+          : await fetchMilitary();
+        if (!raw) return;
+        state[source].data = EXTRACT.adsb(raw);
+      } else if (source === 'ships') {
+        if (timeMode !== 'live') return;
+        const bbox = viewBbox();
+        const raw = await fetchJSON(`/api/feed?source=ships&bbox=${bbox}`);
+        if (!raw) return;
+        state.ships.data = EXTRACT.ships(raw);
+      } else if (source === 'gdelt') {
+        const raw = await fetchJSON(`/api/feed?source=gdelt${timeParams()}`);
+        if (!raw) return;
+        state.conflict.data = EXTRACT.gdelt(raw);
+      } else if (source === 'earthquakes') {
+        const raw = await fetchJSON(`/api/feed?source=earthquakes${timeParams()}`);
+        if (!raw) return;
+        state.earthquakes.data = EXTRACT.earthquakes(raw);
+      } else if (source === 'events') {
+        const raw = await fetchJSON(`/api/feed?source=events${timeParams()}`);
+        if (!raw) return;
+        out = EXTRACT.events(raw);
+        for (const [key, layer] of Object.entries(LAYERS))
+          if (layer.source === 'events') state[key].data = out[layer.category] || [];
+      }
+      updateLegend(); compose(); bumpStatus();
+    }
+
+    function viewBbox() {
+      const pov = globe.pointOfView();
+      const span = Math.min(60, Math.max(5, pov.altitude * 28));
+      const w = pov.lng - span, e = pov.lng + span;
+      const s = Math.max(-85, pov.lat - span), n = Math.min(85, pov.lat + span);
+      return `${w.toFixed(2)},${s.toFixed(2)},${e.toFixed(2)},${n.toFixed(2)}`;
+    }
+
+    function refreshViewBounded() {
+      if (timeMode !== 'live') return;
+      if (state.aircraft.visible) refresh('aircraft');
+      if (state.ships.visible)    refresh('ships');
+    }
+
+    // DeepState frontline (conflict polygon layer)
+    async function refreshDeepState() {
+      if (!(state.conflict && state.conflict.visible)) return;
+      const ts = timeMode === 'live' ? '' : `&ts=${Math.floor(timeMode.getTime() / 1000)}`;
+      const raw = await fetchJSON(`/api/feed?source=deepstate${ts}`);
+      if (!raw) return;
+      deepstateGeo = (raw.features || []).filter(f =>
+        f.geometry && /Polygon/.test(f.geometry.type));
+      composePolygons();
+    }
+
+    const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'aircraft', 'military', 'ships'];
+    let timers = [];
     function startScheduler() {
-      SOURCES.forEach(src => {
+      stopScheduler();
+      POLL_SOURCES.forEach(src => {
         refresh(src);
-        setInterval(() => refresh(src), REFRESH_MS[src] || 120_000);
+        timers.push(setInterval(() => refresh(src), REFRESH_MS[src] || 120_000));
       });
+      refreshDeepState();
+      timers.push(setInterval(refreshDeepState, REFRESH_MS.deepstate));
+    }
+    function stopScheduler() { timers.forEach(clearInterval); timers = []; }
+
+    function reloadAll() {
+      // Re-pull every layer for the current time mode (used by the scrubber).
+      ['earthquakes', 'events', 'gdelt'].forEach(refresh);
+      refreshDeepState();
+      if (timeMode === 'live') refreshViewBounded();
+      compose();
     }
 
     // ============================================================
-    // 9. Legend (toggleable per layer)
+    // 10. Geospatial tools — borders, search, measure, terminator
+    // ============================================================
+    async function loadBorders() {
+      if (bordersGeo) return;
+      const j = await fetchJSON('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson');
+      bordersGeo = j ? (j.features || []) : [];
+    }
+
+    async function geocode(q) {
+      const j = await fetchJSON(`/api/feed?source=geocode&q=${encodeURIComponent(q)}`);
+      if (Array.isArray(j) && j[0]) {
+        globe.pointOfView({ lat: +j[0].lat, lng: +j[0].lon, altitude: 1.4 }, 1200);
+      }
+    }
+
+    // Distance measurement: click two points
+    let measuring = false, measurePts = [];
+    function haversine(a, b) {
+      const R = 6371, rad = Math.PI / 180;
+      const dLat = (b.lat - a.lat) * rad, dLon = (b.lng - a.lng) * rad;
+      const x = Math.sin(dLat / 2) ** 2 +
+        Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    }
+    globe.onGlobeClick(({ lat, lng }) => {
+      if (!measuring) return;
+      measurePts.push({ lat, lng });
+      if (measurePts.length === 2) {
+        const km = haversine(measurePts[0], measurePts[1]);
+        document.getElementById('status').innerHTML =
+          `<b>Distance:</b> ${km.toFixed(0)} km · ${(km * 0.539957).toFixed(0)} NM` +
+          ` &nbsp;(click MEASURE to reset)`;
+        measuring = false; document.getElementById('meas-btn').classList.remove('active');
+        measurePts = [];
+      } else {
+        document.getElementById('status').innerHTML = `<b>Measure:</b> first point set — click the second.`;
+      }
+    });
+
+    // ============================================================
+    // 11. Controls wiring
+    // ============================================================
+    const timeRange = document.getElementById('time-range');
+    const timeLabel = document.getElementById('time-label');
+    const liveBtn   = document.getElementById('live-btn');
+
+    function setTimeFromSlider(v) {
+      v = +v;
+      if (v === 0) {
+        timeMode = 'live'; timeLabel.textContent = 'NOW';
+        timeLabel.classList.remove('past'); liveBtn.classList.add('active');
+      } else {
+        const d = new Date(); d.setUTCDate(d.getUTCDate() + v);
+        timeMode = d;
+        timeLabel.textContent = d.toISOString().slice(0, 10);
+        timeLabel.classList.add('past'); liveBtn.classList.remove('active');
+      }
+      reloadAll();
+    }
+    let scrubT;
+    timeRange.addEventListener('input', e => {
+      clearTimeout(scrubT); const v = e.target.value;
+      timeLabel.textContent = v === '0' ? 'NOW' : '…';
+      scrubT = setTimeout(() => setTimeFromSlider(v), 350);
+    });
+    liveBtn.addEventListener('click', () => { timeRange.value = 0; setTimeFromSlider(0); });
+
+    document.getElementById('base-btn').addEventListener('click', e => {
+      ui.satellite = !ui.satellite;
+      e.target.classList.toggle('active', ui.satellite);
+      globe.globeImageUrl(ui.satellite ? DAY_TEX : NIGHT_TEX);
+    });
+    document.getElementById('bord-btn').addEventListener('click', async e => {
+      ui.borders = !ui.borders;
+      e.target.classList.toggle('active', ui.borders);
+      if (ui.borders) await loadBorders();
+      composePolygons();
+    });
+    document.getElementById('term-btn').addEventListener('click', e => {
+      ui.terminator = !ui.terminator;
+      e.target.classList.toggle('active', ui.terminator);
+      composePolygons();
+    });
+    document.getElementById('meas-btn').addEventListener('click', e => {
+      measuring = !measuring; measurePts = [];
+      e.target.classList.toggle('active', measuring);
+      if (measuring) document.getElementById('status').innerHTML = `<b>Measure:</b> click two points on the globe.`;
+    });
+    document.getElementById('search-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.target.value.trim()) geocode(e.target.value.trim());
+    });
+    // Refresh terminator each minute while shown
+    setInterval(() => { if (ui.terminator) composePolygons(); }, 60_000);
+
+    // ============================================================
+    // 12. Grouped legend
     // ============================================================
     const legendEl = document.getElementById('legend');
     function renderLegend() {
       legendEl.innerHTML = '';
-      for (const [key, layer] of Object.entries(LAYERS)) {
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.dataset.key = key;
-        row.innerHTML = `
-          <span class="count" data-count></span>
-          <span class="label">${layer.label}</span>
-          <span class="dot" style="background:${layer.color};color:${layer.color};"></span>
-        `;
-        row.addEventListener('click', () => {
-          state[key].visible = !state[key].visible;
-          row.classList.toggle('off', !state[key].visible);
-          compose();
-        });
-        legendEl.appendChild(row);
+      for (const [gkey, group] of Object.entries(GROUPS)) {
+        const g = document.createElement('div');
+        g.className = 'group'; g.dataset.group = gkey;
+        const head = document.createElement('div');
+        head.className = 'ghead';
+        head.innerHTML = `<span class="label">${group.label}</span><span class="chev">▾</span>`;
+        head.addEventListener('click', () => g.classList.toggle('collapsed'));
+        g.appendChild(head);
+        const rows = document.createElement('div'); rows.className = 'rows';
+        for (const key of group.keys) {
+          const layer = LAYERS[key];
+          const row = document.createElement('div');
+          row.className = 'row'; row.dataset.key = key;
+          row.innerHTML =
+            `<span class="count" data-count></span>` +
+            `<span class="label">${layer.label}</span>` +
+            `<span class="ico" style="color:${layer.color}">${layer.icon}</span>`;
+          row.addEventListener('click', () => {
+            state[key].visible = !state[key].visible;
+            row.classList.toggle('off', !state[key].visible);
+            if (key === 'conflict') refreshDeepState();
+            compose();
+          });
+          rows.appendChild(row);
+        }
+        g.appendChild(rows); legendEl.appendChild(g);
       }
     }
     function updateLegend() {
       for (const key of Object.keys(LAYERS)) {
         const row = legendEl.querySelector(`[data-key="${key}"]`);
         if (!row) continue;
-        row.querySelector('[data-count]').textContent =
-          state[key].data.length.toLocaleString();
+        row.querySelector('[data-count]').textContent = state[key].data.length.toLocaleString();
         row.classList.toggle('off', !state[key].visible);
       }
     }
 
     // ============================================================
-    // 10. Status line (bottom-left)
+    // 13. Status line
     // ============================================================
     function updateStatusLoop() {
-      const c = name => state[name].data.length;
-      document.getElementById('status').innerHTML =
-        `<b>${c('earthquakes')}</b> earthquakes &nbsp;·&nbsp; ` +
-        `<b>${c('fires')}</b> fires &nbsp;·&nbsp; ` +
-        `<b>${c('volcanoes')}</b> volcanoes<br>` +
-        `<b>${c('storms')}</b> storms &nbsp;·&nbsp; ` +
-        `<b>${c('floods')}</b> floods &nbsp;·&nbsp; ` +
-        `<b>${c('aircraft').toLocaleString()}</b> aircraft live`;
+      const el = document.getElementById('status');
+      if (!measuring && !el.innerHTML.startsWith('<b>Distance') && !el.innerHTML.startsWith('<b>Measure')) {
+        const c = name => state[name].data.length;
+        el.innerHTML =
+          `<b>${c('earthquakes')}</b> quakes · <b>${c('fires')}</b> fires · ` +
+          `<b>${c('volcanoes')}</b> volcanoes · <b>${c('storms')}</b> storms<br>` +
+          `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft · ` +
+          `<b>${c('ships').toLocaleString()}</b> ships`;
+      }
       requestAnimationFrame(updateStatusLoop);
     }
 
     // ============================================================
-    // Boot
+    // 14. Boot
     // ============================================================
     renderLegend();
     updateStatusLoop();
