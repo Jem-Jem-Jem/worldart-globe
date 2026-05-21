@@ -29,15 +29,13 @@ const feedHandler = feedModule.default;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // Proxy /api/feed*
+  // Proxy /api/feed* — feed.js uses the Node (req, res) signature, so pass the
+  // raw Node req straight through (no Request/Response adapter needed).
   if (url.pathname === '/api/feed') {
     try {
-      const edgeReq = new Request(`http://localhost${req.url}`, { method: req.method });
-      const edgeRes = await feedHandler(edgeReq);
-      res.writeHead(edgeRes.status, Object.fromEntries(edgeRes.headers));
-      res.end(await edgeRes.text());
+      await feedHandler(req, res);
     } catch (e) {
-      res.writeHead(500, { 'content-type': 'application/json' });
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: String(e) }));
     }
     return;
