@@ -234,7 +234,7 @@
       <span id="time-label" class="tlabel">NOW</span>
     </div>
     <div class="seg">
-      <button id="base-btn"  class="btn" title="Toggle satellite / night surface">SATELLITE</button>
+      <button id="base-btn"  class="btn" title="Cycle surface: night → blue marble → live satellite">NIGHT</button>
       <button id="bord-btn"  class="btn" title="Country borders">BORDERS</button>
       <button id="term-btn"  class="btn" title="Day / night terminator">DAY·NIGHT</button>
       <button id="meas-btn"  class="btn" title="Measure distance between two points">MEASURE</button>
@@ -446,13 +446,40 @@
     const state = {};
     Object.keys(LAYERS).forEach(k => state[k] = { data: [], visible: true });
     let timeMode = 'live';          // 'live' or a Date (selected day)
-    const ui = { borders: false, terminator: false, satellite: false };
+    const ui = { borders: false, terminator: false };
+    let baseMode = 0;               // 0 = night, 1 = blue marble, 2 = live satellite (GIBS)
 
     // ============================================================
     // 5. Globe setup
     // ============================================================
     const NIGHT_TEX = '//unpkg.com/three-globe/example/img/earth-night.jpg';
     const DAY_TEX   = '//unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+
+    // Phase B — NASA GIBS zoomable satellite tiles (keyless, CORS-open WMTS REST).
+    // VIIRS daily True Color tops out at GoogleMapsCompatible_Level9 (~250 m).
+    const GIBS_LAYER  = 'VIIRS_SNPP_CorrectedReflectance_TrueColor';
+    const GIBS_MATRIX = 'GoogleMapsCompatible_Level9';
+    const GIBS_MAX_L  = 9;
+    function gibsDate() {
+      // Daily imagery for "today" isn't processed yet, so default to yesterday;
+      // when the time scrubber selects a past day, follow it.
+      const d = timeMode instanceof Date ? new Date(timeMode) : new Date();
+      if (!(timeMode instanceof Date)) d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10);
+    }
+    function gibsTileUrl(x, y, l) {
+      // globe.gl passes slippy coords (x, y) and zoom level (l).
+      const z = Math.min(l, GIBS_MAX_L);
+      return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${GIBS_LAYER}` +
+             `/default/${gibsDate()}/${GIBS_MATRIX}/${z}/${y}/${x}.jpg`;
+    }
+    function applyBaseMode() {
+      if (baseMode === 2) {
+        globe.globeImageUrl(null).globeTileEngineUrl(gibsTileUrl);
+      } else {
+        globe.globeTileEngineUrl(null).globeImageUrl(baseMode === 1 ? DAY_TEX : NIGHT_TEX);
+      }
+    }
 
     const globe = Globe({ animateIn: true })
       .globeImageUrl(NIGHT_TEX)
@@ -748,6 +775,8 @@
       ['earthquakes', 'events', 'gdelt'].forEach(refresh);
       refreshDeepState();
       if (timeMode === 'live') refreshViewBounded();
+      // Live-satellite surface tracks the scrubbed day; re-issue tile URLs for the new date.
+      if (baseMode === 2) { globe.globeTileEngineClearCache(); globe.globeTileEngineUrl(gibsTileUrl); }
       compose();
     }
 
@@ -819,10 +848,12 @@
     });
     liveBtn.addEventListener('click', () => { timeRange.value = 0; setTimeFromSlider(0); });
 
+    const BASE_LABELS = ['NIGHT', 'MARBLE', 'SAT·LIVE'];
     document.getElementById('base-btn').addEventListener('click', e => {
-      ui.satellite = !ui.satellite;
-      e.target.classList.toggle('active', ui.satellite);
-      globe.globeImageUrl(ui.satellite ? DAY_TEX : NIGHT_TEX);
+      baseMode = (baseMode + 1) % 3;
+      e.target.textContent = BASE_LABELS[baseMode];
+      e.target.classList.toggle('active', baseMode !== 0);
+      applyBaseMode();
     });
     document.getElementById('bord-btn').addEventListener('click', async e => {
       ui.borders = !ui.borders;
