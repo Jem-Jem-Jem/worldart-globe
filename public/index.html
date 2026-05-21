@@ -477,12 +477,14 @@
     }
     function applyBaseMode(leavingGibs) {
       if (baseMode === 2) {
-        globe.globeImageUrl(null);
+        // Activate tile engine on top of the existing globe image — don't null
+        // globeImageUrl first. If GIBS tiles fail the base texture stays visible;
+        // if tiles load they cover it. Nulling upfront leaves a black globe on
+        // any tile failure and there's no recovery path.
         globe.globeTileEngineUrl(gibsTileUrl);
       } else {
         // Only tear down the tile engine when actually leaving satellite mode;
-        // calling globeTileEngineUrl(null) while it was never active corrupts
-        // the existing globe image material and blanks the texture.
+        // calling globeTileEngineUrl(null) while it was never active blanks the texture.
         if (leavingGibs) globe.globeTileEngineUrl(null);
         globe.globeImageUrl(baseMode === 1 ? DAY_TEX : NIGHT_TEX);
       }
