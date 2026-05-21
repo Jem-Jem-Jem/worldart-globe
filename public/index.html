@@ -475,11 +475,16 @@
       return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${GIBS_LAYER}` +
              `/default/${gibsDate()}/${GIBS_MATRIX}/${z}/${y}/${x}.jpg`;
     }
-    function applyBaseMode() {
+    function applyBaseMode(leavingGibs) {
       if (baseMode === 2) {
-        globe.globeImageUrl(null).globeTileEngineUrl(gibsTileUrl);
+        globe.globeImageUrl(null);
+        globe.globeTileEngineUrl(gibsTileUrl);
       } else {
-        globe.globeTileEngineUrl(null).globeImageUrl(baseMode === 1 ? DAY_TEX : NIGHT_TEX);
+        // Only tear down the tile engine when actually leaving satellite mode;
+        // calling globeTileEngineUrl(null) while it was never active corrupts
+        // the existing globe image material and blanks the texture.
+        if (leavingGibs) globe.globeTileEngineUrl(null);
+        globe.globeImageUrl(baseMode === 1 ? DAY_TEX : NIGHT_TEX);
       }
     }
 
@@ -854,10 +859,11 @@
 
     const BASE_LABELS = ['NIGHT', 'MARBLE', 'SAT·LIVE'];
     document.getElementById('base-btn').addEventListener('click', e => {
+      const leavingGibs = baseMode === 2;
       baseMode = (baseMode + 1) % 3;
       e.target.textContent = BASE_LABELS[baseMode];
       e.target.classList.toggle('active', baseMode !== 0);
-      applyBaseMode();
+      applyBaseMode(leavingGibs);
     });
     document.getElementById('bord-btn').addEventListener('click', async e => {
       ui.borders = !ui.borders;
