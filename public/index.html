@@ -510,8 +510,7 @@
       .polygonAltitude(f => f._alt ?? 0.006)
       (document.getElementById('globe'));
 
-    globe.controls().autoRotate = true;
-    globe.controls().autoRotateSpeed = 0.30;
+    globe.controls().autoRotate = false;
     globe.controls().enableDamping = true;
     globe.controls().dampingFactor = 0.08;
     globe.pointOfView({ lat: 20, lng: 10, altitude: 2.4 }, 0);
@@ -519,16 +518,11 @@
     function resize() { globe.width(window.innerWidth); globe.height(window.innerHeight); }
     window.addEventListener('resize', resize); resize();
 
-    // Pause auto-rotation while interacting; resume after idle. Also refetch
-    // view-bounded layers (aircraft / ships) when the camera settles.
+    // Refetch view-bounded layers (aircraft / ships) when the camera settles.
     let idleT;
     function bumpIdle() {
-      globe.controls().autoRotate = false;
       clearTimeout(idleT);
-      idleT = setTimeout(() => {
-        globe.controls().autoRotate = true;
-        refreshViewBounded();
-      }, 1500);
+      idleT = setTimeout(refreshViewBounded, 1500);
     }
     ['mousedown', 'wheel', 'touchstart'].forEach(ev =>
       document.getElementById('globe').addEventListener(ev, bumpIdle, { passive: true }));
