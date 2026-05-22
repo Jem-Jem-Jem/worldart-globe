@@ -20,6 +20,7 @@ public upstream sources, keeping the project free, key-less, and self-deployable
 | **Aircraft** | adsb.lol → airplanes.live → adsb.one | `/v2/point/{lat}/{lon}/250` | No | **browser-direct** (proxy fallback) |
 | **Military aircraft** | adsb.lol (and fallbacks) | `/v2/mil` | No | browser-direct (proxy fallback) |
 | **Conflict events** | GDELT GEO 2.0 | `api.gdeltproject.org/api/v2/geo/geo` | No | proxy |
+| **Disaster alerts** | GDACS | `gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP` | No | proxy |
 | **Place search** | OSM Nominatim | `nominatim.openstreetmap.org/search` | No | proxy |
 | **Country borders** | Natural Earth (110m) | GitHub raw GeoJSON | No | browser-direct |
 | **Satellite surface** | NASA Blue Marble texture / NASA GIBS daily imagery (WMS) | `gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi` | No | browser-direct |
@@ -56,8 +57,10 @@ None required — every source is key-less.
   volcano+plume, cyclone, water waves, plane, military diamond, conflict burst), signature
   colour, size-by-severity, heading rotation (aircraft) and pulse/alert animation. Emergency
   transponder squawks (7500 hijack / 7600 radio-fail / 7700 emergency) flash an alert.
-- **Grouped, collapsible legend** (Hazards / Conflict / Air) — click a row to toggle a layer,
-  a group header to collapse it.
+- **Disaster alerts (GDACS)** — multi-hazard alerts (cyclones, floods, quakes, droughts, volcanoes,
+  wildfires) coloured by alert level (green/orange/red); red alerts pulse with an expanding ring.
+- **Grouped, collapsible legend** (Hazards / Alerts / Conflict / Air) — click a row to toggle a
+  layer, a group header to collapse it.
 - **Satellite surface cycle** — the surface button cycles night-Earth → daytime Blue Marble →
   live NASA GIBS daily satellite imagery (fetched as a full-world WMS image, so it follows the
   time scrubber).
@@ -93,6 +96,7 @@ npm run dev          # → http://localhost:4321  (no deps, no Vercel CLI needed
 - **USGS**, **NASA EONET / Blue Marble / GIBS** — public domain.
 - **ADS-B**: adsb.lol / airplanes.live / adsb.one — community feeds; respect their non-commercial terms.
 - **GDELT** — [The GDELT Project](https://www.gdeltproject.org/).
+- **GDACS** — [Global Disaster Alert and Coordination System](https://www.gdacs.org/) (UN/EC JRC).
 - **OpenStreetMap / Nominatim** — © OpenStreetMap contributors, per the
   [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/) (max 1 req/s).
 - **Natural Earth** — public domain.

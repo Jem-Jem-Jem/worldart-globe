@@ -6,6 +6,7 @@
 //   /api/feed?source=events[&from=ISO&to=ISO]
 //   /api/feed?source=aircraft&lat=..&lon=..&dist=..   (browser uses feeds direct; this is a fallback)
 //   /api/feed?source=gdelt[&from=ISO&to=ISO]
+//   /api/feed?source=gdacs
 //   /api/feed?source=geocode&q=...
 //
 // Aircraft is deliberately NOT the primary path from this server: community
@@ -79,6 +80,11 @@ function resolveUpstream(source, params) {
       }
       return { url: u.toString(), ttl: 900 };
     }
+    case 'gdacs': {
+      // Global Disaster Alert & Coordination System — last ~100 events / 4 days
+      // as a GeoJSON FeatureCollection with per-event alert levels (Green/Orange/Red).
+      return { url: 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP', ttl: 900 };
+    }
     case 'geocode': {
       const q = params.get('q') || '';
       const u = new URL('https://nominatim.openstreetmap.org/search');
@@ -115,7 +121,7 @@ export default async function handler(req, res) {
   if (!resolved) {
     return send({
       error: 'Unknown or missing `source` parameter.',
-      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'geocode'],
+      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'gdacs', 'geocode'],
     }, 400);
   }
 

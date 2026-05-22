@@ -209,7 +209,7 @@
 
   <div class="hud hud--tl">
     <div class="title"><span class="pulse"></span>World Globe — Live Planetary Intelligence</div>
-    <div class="subtitle">USGS · NASA · ADS-B · GDELT</div>
+    <div class="subtitle">USGS · NASA · ADS-B · GDELT · GDACS</div>
   </div>
 
   <div class="hud hud--tr">
@@ -274,6 +274,7 @@
       plane: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2 8 7 4v2l-9-2.5L12 22l-2 0 1-8.5L2 16v-2l7-4 1-8z"/></svg>`,
       mil:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l1.4 5.6L19 13v1.4l-6.2-1.8L12 19h-0l-0.8-6.4L5 14.4V13l5.6-2.4z" fill="currentColor" stroke="none"/><rect x="3.5" y="3.5" width="17" height="17" transform="rotate(45 12 12)"/></svg>`,
       burst: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5"><path d="M12 2l2.2 5.5L20 6l-3 4.5L22 13l-5.6.6L17 19l-5-3-5 3 .6-5.4L2 13l5-2.5L4 6l5.8 1.5z"/></svg>`,
+      alert: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="#000" stroke-width="0.5"><path d="M12 2L1 21h22L12 2z"/><rect x="11" y="9" width="2" height="6" fill="#000" stroke="none"/><rect x="11" y="17" width="2" height="2" fill="#000" stroke="none"/></svg>`,
     };
 
     // ============================================================
@@ -334,10 +335,20 @@
         size: () => 17, altitude: d => Math.min(0.05, 0.01 + ((d.altitude || 0) / 12000) * 0.035),
         rotate: d => d.heading, ringIf: () => false,
       },
+      // ---- Disaster alerts (GDACS, severity-rated) ----
+      alerts: {
+        label: 'ALERTS', group: 'alerts', icon: ICON.alert,
+        color: '#ff7a1a', source: 'gdacs',
+        size:     d => d.alertLevel === 'Red' ? 24 : d.alertLevel === 'Orange' ? 20 : 16,
+        altitude: () => 0.014,
+        pulse:    d => d.alertLevel !== 'Green',
+        ringIf:   d => d.alertLevel === 'Red', ringMaxR: () => 4,
+      },
     };
 
     const GROUPS = {
       hazards:  { label: 'Hazards',  keys: ['earthquakes', 'fires', 'volcanoes', 'storms', 'floods'] },
+      alerts:   { label: 'Alerts',   keys: ['alerts'] },
       conflict: { label: 'Conflict', keys: ['conflict'] },
       air:      { label: 'Air',      keys: ['aircraft', 'military'] },
     };
@@ -353,6 +364,7 @@
       gdelt:       900_000,
       aircraft:    20_000,
       military:    30_000,
+      gdacs:       900_000,
     };
 
     // ============================================================
@@ -421,6 +433,28 @@
             type: 'Conflict-related coverage (GDELT)',
           };
         });
+      },
+      // GDACS disaster alerts (GeoJSON FeatureCollection, per-event alert level)
+      gdacs(resp) {
+        const TYPE = { EQ: 'Earthquake', TC: 'Tropical Cyclone', FL: 'Flood',
+                       VO: 'Volcano', DR: 'Drought', WF: 'Wildfire' };
+        const COLOR = { Red: '#ff2d2d', Orange: '#ff9500', Green: '#46d160' };
+        return (resp.features || []).map(f => {
+          const c = f.geometry?.coordinates;
+          // GDACS points are [lon, lat]; some events carry polygon geometry — skip those.
+          if (!Array.isArray(c) || typeof c[0] !== 'number') return null;
+          const [lon, lat] = c;
+          const p = f.properties || {};
+          const level = p.alertlevel || p.alertLevel || 'Green';
+          const kind  = TYPE[p.eventtype] || p.eventtype || 'Alert';
+          const sev   = p.severitydata?.severitytext || p.severity || '';
+          return {
+            lat, lon, alertLevel: level, color: COLOR[level] || '#ff7a1a',
+            place: p.name || p.eventname || p.country || kind,
+            country: p.country, time: Date.parse(p.fromdate || p.todate || ''),
+            type: `GDACS ${level} alert · ${kind}${sev ? ' · ' + sev : ''}`,
+          };
+        }).filter(Boolean);
       },
     };
 
@@ -568,9 +602,10 @@
         }
         for (const p of data) {
           if (p.lat == null || p.lon == null) continue;
+          const color = p.color || layer.color;   // per-point colour (e.g. GDACS alert level)
           markers.push({
             lat: p.lat, lng: p.lon, alt: layer.altitude ? layer.altitude(p) : 0.01,
-            size: layer.size(p), color: layer.color, icon: layer.icon,
+            size: layer.size(p), color, icon: layer.icon,
             rotate: layer.rotate ? layer.rotate(p) : null,
             pulse:  layer.pulse ? layer.pulse(p) : false,
             alert:  layer.alert ? layer.alert(p) : false,
@@ -579,7 +614,7 @@
             altitude: p.altitude, velocity: p.velocity, count: p.count,
           });
           if (layer.ringIf && layer.ringIf(p)) {
-            rings.push({ lat: p.lat, lon: p.lon, color: layer.color,
+            rings.push({ lat: p.lat, lon: p.lon, color,
               maxR: layer.ringMaxR ? layer.ringMaxR(p) : 3 });
           }
         }
@@ -689,6 +724,10 @@
         const raw = await fetchJSON(`/api/feed?source=gdelt${timeParams()}`);
         if (!raw) return;
         state.conflict.data = EXTRACT.gdelt(raw);
+      } else if (source === 'gdacs') {
+        const raw = await fetchJSON('/api/feed?source=gdacs');
+        if (!raw) return;
+        state.alerts.data = EXTRACT.gdacs(raw);
       } else if (source === 'earthquakes') {
         const raw = await fetchJSON(`/api/feed?source=earthquakes${timeParams()}`);
         if (!raw) return;
@@ -716,7 +755,7 @@
       if (state.aircraft.visible) refresh('aircraft');
     }
 
-    const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'aircraft', 'military'];
+    const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'gdacs', 'aircraft', 'military'];
     let timers = [];
     function startScheduler() {
       stopScheduler();
@@ -884,7 +923,7 @@
         const c = name => state[name].data.length;
         el.innerHTML =
           `<b>${c('earthquakes')}</b> quakes · <b>${c('fires')}</b> fires · ` +
-          `<b>${c('volcanoes')}</b> volcanoes · <b>${c('storms')}</b> storms<br>` +
+          `<b>${c('volcanoes')}</b> volcanoes · <b>${c('alerts')}</b> alerts<br>` +
           `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft`;
       }
       requestAnimationFrame(updateStatusLoop);
