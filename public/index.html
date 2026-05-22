@@ -747,14 +747,40 @@
       if (state.ships.visible)    refresh('ships');
     }
 
+    // three-globe fills the polygon interior by RFC 7946 winding (outer rings
+    // counter-clockwise). DeepState's rings are wound the other way, so without
+    // this the fill inverts and covers the whole globe. Rewind outer rings CCW,
+    // holes CW. (Natural Earth borders already follow RFC 7946, so they're fine.)
+    function ringArea(ring) {
+      let a = 0;
+      for (let i = 0, n = ring.length; i < n; i++) {
+        const [x1, y1] = ring[i], [x2, y2] = ring[(i + 1) % n];
+        a += x1 * y2 - x2 * y1;
+      }
+      return a / 2;
+    }
+    function rewindRings(rings) {
+      return rings.map((ring, i) => {
+        const ccw = ringArea(ring) > 0;
+        const wantCCW = i === 0;            // outer ring CCW, holes CW
+        return ccw === wantCCW ? ring : ring.slice().reverse();
+      });
+    }
+    function fixWinding(geom) {
+      if (geom?.type === 'Polygon')      return { ...geom, coordinates: rewindRings(geom.coordinates) };
+      if (geom?.type === 'MultiPolygon') return { ...geom, coordinates: geom.coordinates.map(rewindRings) };
+      return geom;
+    }
+
     // DeepState frontline (conflict polygon layer)
     async function refreshDeepState() {
       if (!(state.conflict && state.conflict.visible)) return;
       const ts = timeMode === 'live' ? '' : `&ts=${Math.floor(timeMode.getTime() / 1000)}`;
       const raw = await fetchJSON(`/api/feed?source=deepstate${ts}`);
       if (!raw) return;
-      deepstateGeo = (raw.features || []).filter(f =>
-        f.geometry && /Polygon/.test(f.geometry.type));
+      deepstateGeo = (raw.features || [])
+        .filter(f => f.geometry && /Polygon/.test(f.geometry.type))
+        .map(f => ({ ...f, geometry: fixWinding(f.geometry) }));
       composePolygons();
     }
 
