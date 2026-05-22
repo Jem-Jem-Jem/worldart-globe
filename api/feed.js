@@ -94,16 +94,16 @@ function resolveUpstream(source, params) {
       return { url: u.toString(), ttl: 86400 };
     }
     case 'tile': {
-      // Proxy NASA GIBS WMTS tiles so the browser receives them same-origin,
-      // bypassing the WebGL cross-origin texture rejection that blocks direct tile loads.
-      const layer = 'VIIRS_SNPP_CorrectedReflectance_TrueColor';
-      const date  = params.get('date') || new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      const z = params.get('z') ?? '1';
+      // Proxy ESRI World Imagery tiles same-origin so WebGL accepts the textures
+      // (three-globe's tile loader can't use cross-origin ones). ESRI serves high-res
+      // aerial/satellite imagery on the standard Web Mercator XYZ grid that globe.gl's
+      // tile engine expects, down to ~zoom 19 — a Google-Earth-like surface, keyless.
+      const z = params.get('z') ?? '0';
       const x = params.get('x') ?? '0';
       const y = params.get('y') ?? '0';
-      // WMTS row/col order: z / TileRow(y) / TileCol(x)
+      // ESRI tile path order: /tile/{z}/{row=y}/{col=x}
       return {
-        url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${layer}/default/${date}/GoogleMapsCompatible/${z}/${y}/${x}.jpg`,
+        url: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
         ttl: 86400,
       };
     }
