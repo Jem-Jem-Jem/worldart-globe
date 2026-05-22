@@ -10,7 +10,7 @@
     "deploy": "vercel --prod"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.20.1"
   },
   "engines": {
     "node": ">=20"

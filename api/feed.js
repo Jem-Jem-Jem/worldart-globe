@@ -15,6 +15,12 @@
 // directly (residential IP). AIS is the exception — its key must stay server-side,
 // so we open a short-lived WebSocket snapshot here.
 
+import { WebSocket as WsWebSocket } from 'ws';
+
+// Prefer the runtime global WebSocket (Node 22+); fall back to the `ws` package.
+// Resolved once at module load so bundling always traces the dependency.
+const WS = globalThis.WebSocket || WsWebSocket;
+
 const DEFAULT_TTL = 60;
 
 function gdeltStamp(iso) {
@@ -83,11 +89,8 @@ function resolveUpstream(source, params) {
       }
       return { url: u.toString(), ttl: 900 };
     }
-    case 'deepstate': {
-      const ts = params.get('ts');
-      const seg = ts ? encodeURIComponent(ts) : 'last';
-      return { url: `https://deepstatemap.live/api/history/${seg}/geojson`, ttl: 3600 };
-    }
+    // 'deepstate' is handled by a dedicated path (fetchDeepState) — it needs
+    // response normalization, not generic passthrough.
     case 'geocode': {
       const q = params.get('q') || '';
       const u = new URL('https://nominatim.openstreetmap.org/search');
@@ -102,16 +105,10 @@ function resolveUpstream(source, params) {
 }
 
 // --- AIS snapshot via aisstream.io WebSocket (key stays server-side) ----------
-async function aisSnapshot(bbox) {
+async function aisSnapshot(bbox, debug = false) {
   const key = (process.env.AISSTREAM_API_KEY ?? '').trim();
   if (!key) return { ships: [], _disabled: 'AISSTREAM_API_KEY not set' };
-
-  // Prefer the runtime global WebSocket (Node 22+), fall back to the `ws` package.
-  let WS = globalThis.WebSocket;
-  if (!WS) {
-    try { WS = (await import('ws')).default; } catch { /* not installed */ }
-  }
-  if (!WS) return { ships: [], _unsupported: 'WebSocket not available in runtime' };
+  if (!WS)  return { ships: [], _unsupported: 'WebSocket not available in runtime' };
 
   // bbox = west,south,east,north  ->  aisstream wants [[lat1,lon1],[lat2,lon2]]
   let box = [[-90, -180], [90, 180]];
@@ -122,43 +119,97 @@ async function aisSnapshot(bbox) {
 
   return await new Promise((resolve) => {
     const ships = new Map();
-    let ws;
-    const done = () => {
+    const diag = { impl: WS === globalThis.WebSocket ? 'global' : 'ws-pkg',
+                   opened: false, messages: 0, serverNote: null, error: null, closeCode: null };
+    let ws, settled = false;
+    const finish = () => {
+      if (settled) return; settled = true;
       try { ws && ws.close(); } catch {}
-      resolve({ ships: [...ships.values()] });
+      const out = { ships: [...ships.values()] };
+      if (!ships.size && diag.serverNote) out._note = diag.serverNote;
+      if (debug) out._debug = diag;
+      resolve(out);
     };
-    const timer = setTimeout(done, 3000);
+    const timer = setTimeout(finish, 4500);
     try {
       ws = new WS('wss://stream.aisstream.io/v0/stream');
-      ws.onopen = () => ws.send(JSON.stringify({
-        APIKey: key,
-        BoundingBoxes: [box],
-        FilterMessageTypes: ['PositionReport'],
-      }));
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
-          const pr  = msg?.Message?.PositionReport;
-          const meta = msg?.MetaData;
-          if (!pr || meta == null) return;
-          const mmsi = meta.MMSI;
-          ships.set(mmsi, {
-            mmsi,
-            lat: pr.Latitude,
-            lon: pr.Longitude,
-            heading: (pr.TrueHeading != null && pr.TrueHeading < 360) ? pr.TrueHeading : pr.Cog,
-            speed: pr.Sog,
-            name: (meta.ShipName || '').trim(),
-          });
-          if (ships.size >= 500) { clearTimeout(timer); done(); }
-        } catch {}
+      ws.onopen = () => {
+        diag.opened = true;
+        ws.send(JSON.stringify({
+          APIKey: key,
+          BoundingBoxes: [box],
+          FilterMessageTypes: ['PositionReport'],
+        }));
       };
-      ws.onerror = () => { clearTimeout(timer); done(); };
-    } catch {
+      ws.onmessage = (ev) => {
+        diag.messages++;
+        const text = typeof ev.data === 'string' ? ev.data : ev.data.toString();
+        let msg;
+        try { msg = JSON.parse(text); }
+        catch { if (!diag.serverNote) diag.serverNote = text.slice(0, 200); return; }
+        // aisstream rejects bad keys / malformed subscriptions with an error frame.
+        if (msg && msg.error) { diag.serverNote = String(msg.error); return; }
+        const pr   = msg?.Message?.PositionReport;
+        const meta = msg?.MetaData;
+        if (!pr || meta == null) return;
+        const mmsi = meta.MMSI;
+        ships.set(mmsi, {
+          mmsi,
+          lat: pr.Latitude,
+          lon: pr.Longitude,
+          heading: (pr.TrueHeading != null && pr.TrueHeading < 360) ? pr.TrueHeading : pr.Cog,
+          speed: pr.Sog,
+          name: (meta.ShipName || '').trim(),
+        });
+        if (ships.size >= 500) { clearTimeout(timer); finish(); }
+      };
+      ws.onerror = (e) => {
+        diag.error = String(e?.message || e?.error?.message || e?.error || 'ws error');
+        clearTimeout(timer); finish();
+      };
+      ws.onclose = (e) => { diag.closeCode = e?.code ?? null; };
+    } catch (e) {
       clearTimeout(timer);
-      resolve({ ships: [], _error: 'ws init failed' });
+      resolve({ ships: [], _error: 'ws init failed: ' + String(e) });
     }
   });
+}
+
+// --- DeepState frontline, normalized to a plain GeoJSON FeatureCollection -----
+// Live snapshot lives at /api/history/last and wraps the data as { id, map: FC }.
+// A specific snapshot is /api/history/{id}/geojson and is already a bare FC.
+// Both require browser-like headers + X-Requested-With or Cloudflare blocks them.
+async function fetchDeepState(ts, debug = false) {
+  const url = ts
+    ? `https://deepstatemap.live/api/history/${encodeURIComponent(ts)}/geojson`
+    : 'https://deepstatemap.live/api/history/last';
+  const headers = {
+    'Accept':           'application/json, text/javascript, */*; q=0.01',
+    'User-Agent':       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept-Language':  'en-US,en;q=0.9',
+    'Referer':          'https://deepstatemap.live/',
+    'Origin':           'https://deepstatemap.live',
+    'X-Requested-With': 'XMLHttpRequest',
+  };
+  const fail = (extra) => ({ type: 'FeatureCollection', features: [], _debug: { url, ...extra } });
+  try {
+    const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
+    const body = await resp.text();
+    let data;
+    try { data = JSON.parse(body); }
+    catch { return fail({ status: resp.status, contentType: resp.headers.get('content-type'), bodyStart: body.slice(0, 200) }); }
+
+    const fc = (data && data.map && Array.isArray(data.map.features)) ? data.map
+             : (data && Array.isArray(data.features))                 ? data
+             : null;
+    if (!fc) return fail({ status: resp.status, keys: Object.keys(data || {}).slice(0, 10) });
+
+    const out = { type: 'FeatureCollection', features: fc.features };
+    if (debug) out._debug = { url, status: resp.status, count: fc.features.length };
+    return out;
+  } catch (e) {
+    return fail({ error: String(e) });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -178,10 +229,18 @@ export default async function handler(req, res) {
     res.end(JSON.stringify(obj));
   };
 
+  const debug = params.get('debug') === '1';
+
   // AIS — special path (WebSocket snapshot, not a passthrough fetch)
   if (source === 'ships') {
-    const snap = await aisSnapshot(params.get('bbox'));
-    return send(snap, 200, 60);
+    const snap = await aisSnapshot(params.get('bbox'), debug);
+    return send(snap, 200, debug ? 0 : 60);
+  }
+
+  // DeepState — special path (response normalization, not passthrough)
+  if (source === 'deepstate') {
+    const fc = await fetchDeepState(params.get('ts'), debug);
+    return send(fc, 200, debug ? 0 : 3600);
   }
 
   const resolved = resolveUpstream(source, params);
@@ -198,17 +257,6 @@ export default async function handler(req, res) {
     'Accept':     'application/json,application/geo+json',
   };
 
-  // DeepState sits behind Cloudflare and blocks non-browser agents from
-  // datacenter IPs, so present browser-like headers for that source.
-  if (source === 'deepstate') {
-    reqHeaders['User-Agent'] =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-    reqHeaders['Accept']          = 'application/json, text/plain, */*';
-    reqHeaders['Accept-Language'] = 'en-US,en;q=0.9';
-    reqHeaders['Referer']         = 'https://deepstatemap.live/';
-    reqHeaders['Origin']          = 'https://deepstatemap.live';
-  }
-
   try {
     const resp = await fetch(upstream, {
       headers: reqHeaders,
@@ -221,6 +269,15 @@ export default async function handler(req, res) {
 
     const body        = await resp.text();
     const contentType = resp.headers.get('content-type') ?? 'application/json; charset=utf-8';
+
+    // ?debug=1 — surface exactly what the upstream returned (status, type, snippet).
+    if (debug) {
+      return send({
+        source, upstream, status: resp.status, contentType,
+        bodyStart: body.slice(0, 600), length: body.length,
+      });
+    }
+
     res.writeHead(resp.status, {
       'content-type':                contentType,
       'cache-control':               `public, s-maxage=${ttl}, stale-while-revalidate=${ttl * 4}`,
