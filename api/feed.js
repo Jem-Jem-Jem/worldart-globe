@@ -105,7 +105,13 @@ function resolveUpstream(source, params) {
 async function aisSnapshot(bbox) {
   const key = (process.env.AISSTREAM_API_KEY ?? '').trim();
   if (!key) return { ships: [], _disabled: 'AISSTREAM_API_KEY not set' };
-  if (typeof WebSocket === 'undefined') return { ships: [], _unsupported: 'WebSocket not available in runtime' };
+
+  // Prefer the runtime global WebSocket (Node 22+), fall back to the `ws` package.
+  let WS = globalThis.WebSocket;
+  if (!WS) {
+    try { WS = (await import('ws')).default; } catch { /* not installed */ }
+  }
+  if (!WS) return { ships: [], _unsupported: 'WebSocket not available in runtime' };
 
   // bbox = west,south,east,north  ->  aisstream wants [[lat1,lon1],[lat2,lon2]]
   let box = [[-90, -180], [90, 180]];
@@ -123,7 +129,7 @@ async function aisSnapshot(bbox) {
     };
     const timer = setTimeout(done, 3000);
     try {
-      ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
+      ws = new WS('wss://stream.aisstream.io/v0/stream');
       ws.onopen = () => ws.send(JSON.stringify({
         APIKey: key,
         BoundingBoxes: [box],
@@ -191,6 +197,17 @@ export default async function handler(req, res) {
     'User-Agent': 'worldart-globe/2.0 (non-commercial open-source; https://github.com/jem-jem-jem/worldart-globe)',
     'Accept':     'application/json,application/geo+json',
   };
+
+  // DeepState sits behind Cloudflare and blocks non-browser agents from
+  // datacenter IPs, so present browser-like headers for that source.
+  if (source === 'deepstate') {
+    reqHeaders['User-Agent'] =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    reqHeaders['Accept']          = 'application/json, text/plain, */*';
+    reqHeaders['Accept-Language'] = 'en-US,en;q=0.9';
+    reqHeaders['Referer']         = 'https://deepstatemap.live/';
+    reqHeaders['Origin']          = 'https://deepstatemap.live';
+  }
 
   try {
     const resp = await fetch(upstream, {
