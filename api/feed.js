@@ -93,20 +93,6 @@ function resolveUpstream(source, params) {
       u.searchParams.set('limit', '1');
       return { url: u.toString(), ttl: 86400 };
     }
-    case 'tile': {
-      // Proxy ESRI World Imagery tiles same-origin so WebGL accepts the textures
-      // (three-globe's tile loader can't use cross-origin ones). ESRI serves high-res
-      // aerial/satellite imagery on the standard Web Mercator XYZ grid that globe.gl's
-      // tile engine expects, down to ~zoom 19 — a Google-Earth-like surface, keyless.
-      const z = params.get('z') ?? '0';
-      const x = params.get('x') ?? '0';
-      const y = params.get('y') ?? '0';
-      // ESRI tile path order: /tile/{z}/{row=y}/{col=x}
-      return {
-        url: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
-        ttl: 86400,
-      };
-    }
     default:
       return undefined;
   }
@@ -135,15 +121,14 @@ export default async function handler(req, res) {
   if (!resolved) {
     return send({
       error: 'Unknown or missing `source` parameter.',
-      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'gdacs', 'geocode', 'tile'],
+      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'gdacs', 'geocode'],
     }, 400);
   }
 
   const { url: upstream, ttl } = resolved;
-  const isTile = source === 'tile';
   const reqHeaders = {
     'User-Agent': 'worldart-globe/2.0 (non-commercial open-source; https://github.com/jem-jem-jem/worldart-globe)',
-    'Accept':     isTile ? 'image/jpeg,image/*' : 'application/json,application/geo+json',
+    'Accept':     'application/json,application/geo+json',
   };
 
   try {
@@ -154,18 +139,6 @@ export default async function handler(req, res) {
 
     if (source === 'aircraft' && [401, 403, 429].includes(resp.status)) {
       return send({ ac: [], _limited: true });
-    }
-
-    // Tiles are binary — stream as arrayBuffer to avoid text encoding corruption.
-    if (isTile) {
-      const buf = await resp.arrayBuffer();
-      res.writeHead(resp.status, {
-        'content-type':                'image/jpeg',
-        'cache-control':               `public, s-maxage=${ttl}, stale-while-revalidate=${ttl * 4}`,
-        'access-control-allow-origin': '*',
-      });
-      res.end(Buffer.from(buf));
-      return;
     }
 
     const body        = await resp.text();

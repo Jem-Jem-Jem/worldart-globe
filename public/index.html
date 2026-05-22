@@ -472,29 +472,30 @@
     const NIGHT_TEX = 'https://cdn.jsdelivr.net/npm/three-globe@2/example/img/earth-night.jpg';
     const DAY_TEX   = 'https://cdn.jsdelivr.net/npm/three-globe@2/example/img/earth-blue-marble.jpg';
 
-    // SAT·LIVE — high-res satellite surface.
-    // Uses globeTileEngineUrl (ESRI World Imagery) for zoom-level detail: the surface
-    // sharpens as you zoom in instead of stretching a single image. Direct tile loads
-    // are blocked by WebGL's cross-origin restriction (three-globe's tile loader can't
-    // use cross-origin textures), so tiles are proxied through /api/feed (same-origin),
-    // which removes the barrier. Blue Marble is the backdrop shown while tiles load in.
-    function satTileUrl(x, y, z) {
-      return `/api/feed?source=tile&x=${x}&y=${y}&z=${z}`;
+    // SAT·LIVE — NASA GIBS daily satellite imagery as a full-world WMS image.
+    // globe.gl wraps a single texture around the sphere, so this zooms as one image
+    // rather than refining into higher-detail tiles. (A tile-engine attempt for true
+    // zoom detail regressed the layer; reverted to this known-working approach.)
+    function gibsDate() {
+      // Use yesterday by default (today's imagery often isn't processed yet);
+      // follow the time scrubber when a past day is selected.
+      const d = timeMode instanceof Date ? new Date(timeMode) : new Date();
+      if (!(timeMode instanceof Date)) d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10);
     }
-    let tileEngineActive = false;
+    function gibsImageUrl() {
+      const date = gibsDate();
+      return `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi` +
+        `?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0` +
+        `&LAYERS=VIIRS_SNPP_CorrectedReflectance_TrueColor` +
+        `&CRS=EPSG:4326&BBOX=-90,-180,90,180` +
+        `&WIDTH=2048&HEIGHT=1024&FORMAT=image/jpeg&TIME=${date}`;
+    }
     function applyBaseMode() {
-      if (baseMode === 2) {
-        // Set a backdrop first so the globe isn't blank while tiles load.
-        globe.globeImageUrl(DAY_TEX);
-        globe.globeTileEngineUrl(satTileUrl);
-        tileEngineActive = true;
-      } else {
-        if (tileEngineActive) {
-          globe.globeTileEngineUrl('');
-          tileEngineActive = false;
-        }
-        globe.globeImageUrl(baseMode === 1 ? DAY_TEX : NIGHT_TEX);
-      }
+      globe.globeImageUrl(
+        baseMode === 2 ? gibsImageUrl() :
+        baseMode === 1 ? DAY_TEX : NIGHT_TEX
+      );
     }
 
     const globe = Globe({ animateIn: true })
@@ -788,6 +789,8 @@
       // Re-pull every layer for the current time mode (used by the scrubber).
       ['earthquakes', 'events', 'gdelt'].forEach(refresh);
       if (timeMode === 'live') refreshViewBounded();
+      // Satellite surface tracks the scrubbed day — reload the WMS image for the new date.
+      if (baseMode === 2) globe.globeImageUrl(gibsImageUrl());
       compose();
     }
 
