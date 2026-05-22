@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>World Globe — Live Planetary Intelligence</title>
-  <meta name="description" content="A live 3D globe of earthquakes, wildfires, volcanoes, storms, floods, live air & sea traffic, and open-source conflict intelligence." />
+  <meta name="description" content="A live 3D globe of earthquakes, wildfires, volcanoes, storms, floods, live air traffic, and open-source conflict intelligence." />
 
   <style>
     :root {
@@ -15,7 +15,6 @@
       --c-flood:    #3a82ff;
       --c-aircraft: #ffffff;
       --c-military: #b0ff70;
-      --c-ship:     #19e6c8;
       --c-conflict: #ff3b3b;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -210,7 +209,7 @@
 
   <div class="hud hud--tl">
     <div class="title"><span class="pulse"></span>World Globe — Live Planetary Intelligence</div>
-    <div class="subtitle">USGS · NASA · ADS-B · AIS · GDELT</div>
+    <div class="subtitle">USGS · NASA · ADS-B · GDELT</div>
   </div>
 
   <div class="hud hud--tr">
@@ -274,7 +273,6 @@
       flood: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 9c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2M2 15c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/></svg>`,
       plane: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2 8 7 4v2l-9-2.5L12 22l-2 0 1-8.5L2 16v-2l7-4 1-8z"/></svg>`,
       mil:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l1.4 5.6L19 13v1.4l-6.2-1.8L12 19h-0l-0.8-6.4L5 14.4V13l5.6-2.4z" fill="currentColor" stroke="none"/><rect x="3.5" y="3.5" width="17" height="17" transform="rotate(45 12 12)"/></svg>`,
-      ship:  `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2 4v3l4 1v3l-6-1.5L6 16v-3l4-1V6z"/><path d="M5 17c1.5 1 2.5 1 4 0s2.5-1 4 0 2.5 1 4 0v3c-1.5 1-2.5 1-4 0s-2.5-1-4 0-2.5 1-4 0z"/></svg>`,
       burst: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5"><path d="M12 2l2.2 5.5L20 6l-3 4.5L22 13l-5.6.6L17 19l-5-3-5 3 .6-5.4L2 13l5-2.5L4 6l5.8 1.5z"/></svg>`,
     };
 
@@ -336,22 +334,15 @@
         size: () => 17, altitude: d => Math.min(0.05, 0.01 + ((d.altitude || 0) / 12000) * 0.035),
         rotate: d => d.heading, ringIf: () => false,
       },
-      // ---- Sea (live only) ----
-      ships: {
-        label: 'SHIPS', group: 'sea', icon: ICON.ship, live: true,
-        color: '#19e6c8', source: 'ships',
-        size: () => 15, altitude: () => 0.004, rotate: d => d.heading, ringIf: () => false,
-      },
     };
 
     const GROUPS = {
       hazards:  { label: 'Hazards',  keys: ['earthquakes', 'fires', 'volcanoes', 'storms', 'floods'] },
       conflict: { label: 'Conflict', keys: ['conflict'] },
       air:      { label: 'Air',      keys: ['aircraft', 'military'] },
-      sea:      { label: 'Sea',      keys: ['ships'] },
     };
 
-    const MAX_MARKERS = { aircraft: 150, military: 100, ships: 150, conflict: 120, default: 150 };
+    const MAX_MARKERS = { aircraft: 150, military: 100, conflict: 120, default: 150 };
 
     // ============================================================
     // 2. Sources + polling cadence
@@ -362,7 +353,6 @@
       gdelt:       900_000,
       aircraft:    20_000,
       military:    30_000,
-      ships:       90_000,
     };
 
     // ============================================================
@@ -419,13 +409,6 @@
                 : 'Aircraft',
             };
           });
-      },
-      ships(resp) {
-        return (resp.ships || []).filter(s => s.lat != null && s.lon != null).map(s => ({
-          lat: s.lat, lon: s.lon, heading: s.heading,
-          velocity: s.speed != null ? s.speed * 0.514444 : null,
-          place: s.name || `MMSI ${s.mmsi}`, type: 'Vessel (AIS)',
-        }));
       },
       // GDELT GEO 2.0 PointData GeoJSON
       gdelt(resp) {
@@ -517,7 +500,7 @@
     function resize() { globe.width(window.innerWidth); globe.height(window.innerHeight); }
     window.addEventListener('resize', resize); resize();
 
-    // Refetch view-bounded layers (aircraft / ships) when the camera settles.
+    // Refetch view-bounded layers (aircraft) when the camera settles.
     let idleT;
     function bumpIdle() {
       clearTimeout(idleT);
@@ -702,12 +685,6 @@
           : await fetchMilitary();
         if (!raw) return;
         state[source].data = EXTRACT.adsb(raw);
-      } else if (source === 'ships') {
-        if (timeMode !== 'live') return;
-        const bbox = viewBbox();
-        const raw = await fetchJSON(`/api/feed?source=ships&bbox=${bbox}`);
-        if (!raw) return;
-        state.ships.data = EXTRACT.ships(raw);
       } else if (source === 'gdelt') {
         const raw = await fetchJSON(`/api/feed?source=gdelt${timeParams()}`);
         if (!raw) return;
@@ -737,11 +714,9 @@
     function refreshViewBounded() {
       if (timeMode !== 'live') return;
       if (state.aircraft.visible) refresh('aircraft');
-      if (state.ships.visible)    refresh('ships');
     }
 
-
-    const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'aircraft', 'military', 'ships'];
+    const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'aircraft', 'military'];
     let timers = [];
     function startScheduler() {
       stopScheduler();
@@ -910,8 +885,7 @@
         el.innerHTML =
           `<b>${c('earthquakes')}</b> quakes · <b>${c('fires')}</b> fires · ` +
           `<b>${c('volcanoes')}</b> volcanoes · <b>${c('storms')}</b> storms<br>` +
-          `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft · ` +
-          `<b>${c('ships').toLocaleString()}</b> ships`;
+          `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft`;
       }
       requestAnimationFrame(updateStatusLoop);
     }

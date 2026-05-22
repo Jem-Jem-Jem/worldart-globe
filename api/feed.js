@@ -5,20 +5,12 @@
 //   /api/feed?source=earthquakes[&from=ISO&to=ISO]
 //   /api/feed?source=events[&from=ISO&to=ISO]
 //   /api/feed?source=aircraft&lat=..&lon=..&dist=..   (browser uses feeds direct; this is a fallback)
-//   /api/feed?source=ships&bbox=west,south,east,north
 //   /api/feed?source=gdelt[&from=ISO&to=ISO]
 //   /api/feed?source=geocode&q=...
 //
-// Aircraft + AIS deliberately are NOT the primary path from this server: community
-// ADS-B feeds and AIS providers block datacenter IPs, so the browser fetches ADS-B
-// directly (residential IP). AIS is the exception — its key must stay server-side,
-// so we open a short-lived WebSocket snapshot here.
-
-import { WebSocket as WsWebSocket } from 'ws';
-
-// Prefer the runtime global WebSocket (Node 22+); fall back to the `ws` package.
-// Resolved once at module load so bundling always traces the dependency.
-const WS = globalThis.WebSocket || WsWebSocket;
+// Aircraft is deliberately NOT the primary path from this server: community
+// ADS-B feeds block datacenter IPs, so the browser fetches them directly
+// (residential IP); this proxy is only a fallback.
 
 const DEFAULT_TTL = 60;
 
@@ -29,8 +21,7 @@ function gdeltStamp(iso) {
   return d.toISOString().replace(/[-:T]/g, '').slice(0, 14);
 }
 
-// Resolve a request into an upstream URL + cache TTL. Returns null for sources
-// that need special (non-passthrough) handling (ships).
+// Resolve a request into an upstream URL + cache TTL.
 function resolveUpstream(source, params) {
   switch (source) {
     case 'earthquakes': {
@@ -101,77 +92,6 @@ function resolveUpstream(source, params) {
   }
 }
 
-// --- AIS snapshot via aisstream.io WebSocket (key stays server-side) ----------
-async function aisSnapshot(bbox, debug = false) {
-  const key = (process.env.AISSTREAM_API_KEY ?? '').trim();
-  if (!key) return { ships: [], _disabled: 'AISSTREAM_API_KEY not set' };
-  if (!WS)  return { ships: [], _unsupported: 'WebSocket not available in runtime' };
-
-  // bbox = west,south,east,north  ->  aisstream wants [[lat1,lon1],[lat2,lon2]]
-  let box = [[-90, -180], [90, 180]];
-  if (bbox) {
-    const [w, s, e, n] = bbox.split(',').map(Number);
-    if ([w, s, e, n].every(Number.isFinite)) box = [[s, w], [n, e]];
-  }
-
-  return await new Promise((resolve) => {
-    const ships = new Map();
-    const diag = { impl: WS === globalThis.WebSocket ? 'global' : 'ws-pkg',
-                   opened: false, messages: 0, serverNote: null, error: null, closeCode: null };
-    let ws, settled = false;
-    const finish = () => {
-      if (settled) return; settled = true;
-      try { ws && ws.close(); } catch {}
-      const out = { ships: [...ships.values()] };
-      if (!ships.size && diag.serverNote) out._note = diag.serverNote;
-      if (debug) out._debug = diag;
-      resolve(out);
-    };
-    const timer = setTimeout(finish, 4500);
-    try {
-      ws = new WS('wss://stream.aisstream.io/v0/stream');
-      ws.onopen = () => {
-        diag.opened = true;
-        ws.send(JSON.stringify({
-          APIKey: key,
-          BoundingBoxes: [box],
-          FilterMessageTypes: ['PositionReport'],
-        }));
-      };
-      ws.onmessage = (ev) => {
-        diag.messages++;
-        const text = typeof ev.data === 'string' ? ev.data : ev.data.toString();
-        let msg;
-        try { msg = JSON.parse(text); }
-        catch { if (!diag.serverNote) diag.serverNote = text.slice(0, 200); return; }
-        // aisstream rejects bad keys / malformed subscriptions with an error frame.
-        if (msg && msg.error) { diag.serverNote = String(msg.error); return; }
-        const pr   = msg?.Message?.PositionReport;
-        const meta = msg?.MetaData;
-        if (!pr || meta == null) return;
-        const mmsi = meta.MMSI;
-        ships.set(mmsi, {
-          mmsi,
-          lat: pr.Latitude,
-          lon: pr.Longitude,
-          heading: (pr.TrueHeading != null && pr.TrueHeading < 360) ? pr.TrueHeading : pr.Cog,
-          speed: pr.Sog,
-          name: (meta.ShipName || '').trim(),
-        });
-        if (ships.size >= 500) { clearTimeout(timer); finish(); }
-      };
-      ws.onerror = (e) => {
-        diag.error = String(e?.message || e?.error?.message || e?.error || 'ws error');
-        clearTimeout(timer); finish();
-      };
-      ws.onclose = (e) => { diag.closeCode = e?.code ?? null; };
-    } catch (e) {
-      clearTimeout(timer);
-      resolve({ ships: [], _error: 'ws init failed: ' + String(e) });
-    }
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Main handler  (req: IncomingMessage, res: ServerResponse)
 // ---------------------------------------------------------------------------
@@ -191,17 +111,11 @@ export default async function handler(req, res) {
 
   const debug = params.get('debug') === '1';
 
-  // AIS — special path (WebSocket snapshot, not a passthrough fetch)
-  if (source === 'ships') {
-    const snap = await aisSnapshot(params.get('bbox'), debug);
-    return send(snap, 200, debug ? 0 : 60);
-  }
-
   const resolved = resolveUpstream(source, params);
   if (!resolved) {
     return send({
       error: 'Unknown or missing `source` parameter.',
-      valid: ['earthquakes', 'events', 'aircraft', 'ships', 'gdelt', 'geocode'],
+      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'geocode'],
     }, 400);
   }
 
