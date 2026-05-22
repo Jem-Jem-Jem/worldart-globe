@@ -7,7 +7,6 @@
 //   /api/feed?source=aircraft&lat=..&lon=..&dist=..   (browser uses feeds direct; this is a fallback)
 //   /api/feed?source=ships&bbox=west,south,east,north
 //   /api/feed?source=gdelt[&from=ISO&to=ISO]
-//   /api/feed?source=deepstate[&ts=UNIX_SECONDS]
 //   /api/feed?source=geocode&q=...
 //
 // Aircraft + AIS deliberately are NOT the primary path from this server: community
@@ -89,8 +88,6 @@ function resolveUpstream(source, params) {
       }
       return { url: u.toString(), ttl: 900 };
     }
-    // 'deepstate' is handled by a dedicated path (fetchDeepState) — it needs
-    // response normalization, not generic passthrough.
     case 'geocode': {
       const q = params.get('q') || '';
       const u = new URL('https://nominatim.openstreetmap.org/search');
@@ -175,43 +172,6 @@ async function aisSnapshot(bbox, debug = false) {
   });
 }
 
-// --- DeepState frontline, normalized to a plain GeoJSON FeatureCollection -----
-// Live snapshot lives at /api/history/last and wraps the data as { id, map: FC }.
-// A specific snapshot is /api/history/{id}/geojson and is already a bare FC.
-// Both require browser-like headers + X-Requested-With or Cloudflare blocks them.
-async function fetchDeepState(ts, debug = false) {
-  const url = ts
-    ? `https://deepstatemap.live/api/history/${encodeURIComponent(ts)}/geojson`
-    : 'https://deepstatemap.live/api/history/last';
-  const headers = {
-    'Accept':           'application/json, text/javascript, */*; q=0.01',
-    'User-Agent':       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept-Language':  'en-US,en;q=0.9',
-    'Referer':          'https://deepstatemap.live/',
-    'Origin':           'https://deepstatemap.live',
-    'X-Requested-With': 'XMLHttpRequest',
-  };
-  const fail = (extra) => ({ type: 'FeatureCollection', features: [], _debug: { url, ...extra } });
-  try {
-    const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
-    const body = await resp.text();
-    let data;
-    try { data = JSON.parse(body); }
-    catch { return fail({ status: resp.status, contentType: resp.headers.get('content-type'), bodyStart: body.slice(0, 200) }); }
-
-    const fc = (data && data.map && Array.isArray(data.map.features)) ? data.map
-             : (data && Array.isArray(data.features))                 ? data
-             : null;
-    if (!fc) return fail({ status: resp.status, keys: Object.keys(data || {}).slice(0, 10) });
-
-    const out = { type: 'FeatureCollection', features: fc.features };
-    if (debug) out._debug = { url, status: resp.status, count: fc.features.length };
-    return out;
-  } catch (e) {
-    return fail({ error: String(e) });
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Main handler  (req: IncomingMessage, res: ServerResponse)
 // ---------------------------------------------------------------------------
@@ -237,17 +197,11 @@ export default async function handler(req, res) {
     return send(snap, 200, debug ? 0 : 60);
   }
 
-  // DeepState — special path (response normalization, not passthrough)
-  if (source === 'deepstate') {
-    const fc = await fetchDeepState(params.get('ts'), debug);
-    return send(fc, 200, debug ? 0 : 3600);
-  }
-
   const resolved = resolveUpstream(source, params);
   if (!resolved) {
     return send({
       error: 'Unknown or missing `source` parameter.',
-      valid: ['earthquakes', 'events', 'aircraft', 'ships', 'gdelt', 'deepstate', 'geocode'],
+      valid: ['earthquakes', 'events', 'aircraft', 'ships', 'gdelt', 'geocode'],
     }, 400);
   }
 

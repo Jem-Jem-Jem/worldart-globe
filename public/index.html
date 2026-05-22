@@ -210,7 +210,7 @@
 
   <div class="hud hud--tl">
     <div class="title"><span class="pulse"></span>World Globe — Live Planetary Intelligence</div>
-    <div class="subtitle">USGS · NASA · ADS-B · AIS · GDELT · DeepState</div>
+    <div class="subtitle">USGS · NASA · ADS-B · AIS · GDELT</div>
   </div>
 
   <div class="hud hud--tr">
@@ -363,7 +363,6 @@
       aircraft:    20_000,
       military:    30_000,
       ships:       90_000,
-      deepstate:   3_600_000,
     };
 
     // ============================================================
@@ -608,21 +607,15 @@
     }
 
     // ============================================================
-    // 8. Polygons — country borders + DeepState frontline + terminator
+    // 8. Polygons — country borders + terminator
     // ============================================================
     let bordersGeo = null;     // cached Natural Earth features
-    let deepstateGeo = null;   // cached DeepState features
     function composePolygons() {
       const polys = [];
       if (ui.borders && bordersGeo) {
         for (const f of bordersGeo) polys.push({ geometry: f.geometry,
           _cap: 'rgba(0,0,0,0)', _side: 'rgba(0,0,0,0)',
           _stroke: 'rgba(120,200,255,0.35)', _alt: 0.005 });
-      }
-      if (state.conflict && state.conflict.visible && deepstateGeo) {
-        for (const f of deepstateGeo) polys.push({ geometry: f.geometry,
-          _cap: 'rgba(255,59,59,0.22)', _side: 'rgba(255,59,59,0.30)',
-          _stroke: 'rgba(255,90,90,0.7)', _alt: 0.008 });
       }
       if (ui.terminator) {
         const t = terminatorPolygon();
@@ -747,42 +740,6 @@
       if (state.ships.visible)    refresh('ships');
     }
 
-    // three-globe fills the polygon interior by RFC 7946 winding (outer rings
-    // counter-clockwise). DeepState's rings are wound the other way, so without
-    // this the fill inverts and covers the whole globe. Rewind outer rings CCW,
-    // holes CW. (Natural Earth borders already follow RFC 7946, so they're fine.)
-    function ringArea(ring) {
-      let a = 0;
-      for (let i = 0, n = ring.length; i < n; i++) {
-        const [x1, y1] = ring[i], [x2, y2] = ring[(i + 1) % n];
-        a += x1 * y2 - x2 * y1;
-      }
-      return a / 2;
-    }
-    function rewindRings(rings) {
-      return rings.map((ring, i) => {
-        const ccw = ringArea(ring) > 0;
-        const wantCCW = i === 0;            // outer ring CCW, holes CW
-        return ccw === wantCCW ? ring : ring.slice().reverse();
-      });
-    }
-    function fixWinding(geom) {
-      if (geom?.type === 'Polygon')      return { ...geom, coordinates: rewindRings(geom.coordinates) };
-      if (geom?.type === 'MultiPolygon') return { ...geom, coordinates: geom.coordinates.map(rewindRings) };
-      return geom;
-    }
-
-    // DeepState frontline (conflict polygon layer)
-    async function refreshDeepState() {
-      if (!(state.conflict && state.conflict.visible)) return;
-      const ts = timeMode === 'live' ? '' : `&ts=${Math.floor(timeMode.getTime() / 1000)}`;
-      const raw = await fetchJSON(`/api/feed?source=deepstate${ts}`);
-      if (!raw) return;
-      deepstateGeo = (raw.features || [])
-        .filter(f => f.geometry && /Polygon/.test(f.geometry.type))
-        .map(f => ({ ...f, geometry: fixWinding(f.geometry) }));
-      composePolygons();
-    }
 
     const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'aircraft', 'military', 'ships'];
     let timers = [];
@@ -792,15 +749,12 @@
         refresh(src);
         timers.push(setInterval(() => refresh(src), REFRESH_MS[src] || 120_000));
       });
-      refreshDeepState();
-      timers.push(setInterval(refreshDeepState, REFRESH_MS.deepstate));
     }
     function stopScheduler() { timers.forEach(clearInterval); timers = []; }
 
     function reloadAll() {
       // Re-pull every layer for the current time mode (used by the scrubber).
       ['earthquakes', 'events', 'gdelt'].forEach(refresh);
-      refreshDeepState();
       if (timeMode === 'live') refreshViewBounded();
       // Satellite surface tracks the scrubbed day — reload the WMS image for the new date.
       if (baseMode === 2) globe.globeImageUrl(gibsImageUrl());
@@ -930,7 +884,6 @@
           row.addEventListener('click', () => {
             state[key].visible = !state[key].visible;
             row.classList.toggle('off', !state[key].visible);
-            if (key === 'conflict') refreshDeepState();
             compose();
           });
           rows.appendChild(row);
