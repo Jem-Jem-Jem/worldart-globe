@@ -47,7 +47,6 @@
     }
     .marker svg {
       width: 100%; height: 100%; display: block;
-      filter: drop-shadow(0 0 2px currentColor);
     }
     .marker:hover svg { filter: drop-shadow(0 0 7px currentColor) brightness(1.4); }
     .marker.pulse svg { animation: mpulse 2.6s ease-in-out infinite; }
@@ -293,8 +292,8 @@
       fires: {
         label: 'FIRES', group: 'hazards', icon: ICON.fire,
         color: '#ff6020', source: 'events', category: 'wildfires',
-        size: () => 17, altitude: () => 0.01, pulse: () => true,
-        ringIf: () => true, ringMaxR: () => 1.2,
+        size: () => 17, altitude: () => 0.01,
+        ringIf: () => false,
       },
       volcanoes: {
         label: 'VOLCANOES', group: 'hazards', icon: ICON.volcano,
@@ -318,7 +317,7 @@
         label: 'CONFLICT', group: 'conflict', icon: ICON.burst,
         color: '#ff3b3b', source: 'gdelt',
         size:     d => 15 + Math.min(10, Math.log10((d.count || 1) + 1) * 6),
-        altitude: () => 0.012, pulse: () => true,
+        altitude: () => 0.012, pulse: d => (d.count || 0) >= 10,
         ringIf:   d => (d.count || 0) >= 5, ringMaxR: () => 2.5,
       },
       // ---- Air (live only) ----
@@ -534,14 +533,16 @@
     function resize() { globe.width(window.innerWidth); globe.height(window.innerHeight); }
     window.addEventListener('resize', resize); resize();
 
-    // Refetch view-bounded layers (aircraft) when the camera settles.
+    // When the camera settles: refetch view-bounded layers (aircraft) and
+    // recompose so far-hemisphere markers are re-culled for the new viewpoint.
     let idleT;
     function bumpIdle() {
       clearTimeout(idleT);
-      idleT = setTimeout(refreshViewBounded, 1500);
+      idleT = setTimeout(() => { refreshViewBounded(); compose(); }, 1200);
     }
     ['mousedown', 'wheel', 'touchstart'].forEach(ev =>
       document.getElementById('globe').addEventListener(ev, bumpIdle, { passive: true }));
+    globe.controls().addEventListener('end', bumpIdle);   // drag/zoom finished
 
     // ============================================================
     // 6. Marker factory + tooltip
@@ -589,9 +590,25 @@
     // ============================================================
     // 7. Compose layers -> markers + rings (+ polygons handled separately)
     // ============================================================
+    // Unit vector on the sphere for a lat/lng — used to cull far-side markers.
+    function unitVec(lat, lon) {
+      const a = lat * Math.PI / 180, b = lon * Math.PI / 180, c = Math.cos(a);
+      return [c * Math.cos(b), Math.sin(a), c * Math.sin(b)];
+    }
+    const MARKER_BUDGET = 350;   // global cap on simultaneously-rendered DOM markers
+
     function compose() {
       const markers = [];
       const rings   = [];
+      // globe.gl html markers render in a CSS3D overlay and are NOT depth-occluded
+      // by the globe, so far-hemisphere markers would show through AND still cost a
+      // per-frame DOM transform. Cull anything behind the limb relative to the camera.
+      const pov  = globe.pointOfView();
+      const view = unitVec(pov.lat, pov.lng);
+      const onFront = (lat, lon) => {
+        const v = unitVec(lat, lon);
+        return view[0] * v[0] + view[1] * v[1] + view[2] * v[2] > 0;
+      };
       for (const [key, layer] of Object.entries(LAYERS)) {
         if (!state[key].visible) continue;
         if (layer.live && timeMode !== 'live') continue;      // live layers hide during playback
@@ -602,6 +619,7 @@
         }
         for (const p of data) {
           if (p.lat == null || p.lon == null) continue;
+          if (!onFront(p.lat, p.lon)) continue;               // far hemisphere — skip
           const color = p.color || layer.color;   // per-point colour (e.g. GDACS alert level)
           markers.push({
             lat: p.lat, lng: p.lon, alt: layer.altitude ? layer.altitude(p) : 0.01,
@@ -619,7 +637,11 @@
           }
         }
       }
-      globe.htmlElementsData(markers);
+      // Global budget — keep the largest/most-prominent markers if over.
+      const shown = markers.length > MARKER_BUDGET
+        ? [...markers].sort((a, b) => b.size - a.size).slice(0, MARKER_BUDGET)
+        : markers;
+      globe.htmlElementsData(shown);
       globe.ringsData(rings);
       composePolygons();
     }
@@ -739,7 +761,7 @@
         for (const [key, layer] of Object.entries(LAYERS))
           if (layer.source === 'events') state[key].data = out[layer.category] || [];
       }
-      updateLegend(); compose(); bumpStatus();
+      updateLegend(); compose(); updateStatus(); bumpStatus();
     }
 
     function viewBbox() {
@@ -917,23 +939,22 @@
     // ============================================================
     // 13. Status line
     // ============================================================
-    function updateStatusLoop() {
+    // On-demand only (called at boot and after each data refresh) — never per-frame.
+    function updateStatus() {
       const el = document.getElementById('status');
-      if (!measuring && !el.innerHTML.startsWith('<b>Distance') && !el.innerHTML.startsWith('<b>Measure')) {
-        const c = name => state[name].data.length;
-        el.innerHTML =
-          `<b>${c('earthquakes')}</b> quakes · <b>${c('fires')}</b> fires · ` +
-          `<b>${c('volcanoes')}</b> volcanoes · <b>${c('alerts')}</b> alerts<br>` +
-          `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft`;
-      }
-      requestAnimationFrame(updateStatusLoop);
+      if (measuring || el.innerHTML.startsWith('<b>Distance') || el.innerHTML.startsWith('<b>Measure')) return;
+      const c = name => state[name].data.length;
+      el.innerHTML =
+        `<b>${c('earthquakes')}</b> quakes · <b>${c('fires')}</b> fires · ` +
+        `<b>${c('volcanoes')}</b> volcanoes · <b>${c('alerts')}</b> alerts<br>` +
+        `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft`;
     }
 
     // ============================================================
     // 14. Boot
     // ============================================================
     renderLegend();
-    updateStatusLoop();
+    updateStatus();
     startScheduler();
   </script>
 </body>
