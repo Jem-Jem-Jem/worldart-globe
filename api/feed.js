@@ -5,15 +5,13 @@
 //   /api/feed?source=earthquakes[&from=ISO&to=ISO]
 //   /api/feed?source=events[&from=ISO&to=ISO]
 //   /api/feed?source=aircraft&lat=..&lon=..&dist=..   (browser uses feeds direct; this is a fallback)
-//   /api/feed?source=ships&bbox=west,south,east,north
 //   /api/feed?source=gdelt[&from=ISO&to=ISO]
-//   /api/feed?source=deepstate[&ts=UNIX_SECONDS]
+//   /api/feed?source=gdacs
 //   /api/feed?source=geocode&q=...
 //
-// Aircraft + AIS deliberately are NOT the primary path from this server: community
-// ADS-B feeds and AIS providers block datacenter IPs, so the browser fetches ADS-B
-// directly (residential IP). AIS is the exception — its key must stay server-side,
-// so we open a short-lived WebSocket snapshot here.
+// Aircraft is deliberately NOT the primary path from this server: community
+// ADS-B feeds block datacenter IPs, so the browser fetches them directly
+// (residential IP); this proxy is only a fallback.
 
 const DEFAULT_TTL = 60;
 
@@ -24,8 +22,7 @@ function gdeltStamp(iso) {
   return d.toISOString().replace(/[-:T]/g, '').slice(0, 14);
 }
 
-// Resolve a request into an upstream URL + cache TTL. Returns null for sources
-// that need special (non-passthrough) handling (ships).
+// Resolve a request into an upstream URL + cache TTL.
 function resolveUpstream(source, params) {
   switch (source) {
     case 'earthquakes': {
@@ -83,10 +80,10 @@ function resolveUpstream(source, params) {
       }
       return { url: u.toString(), ttl: 900 };
     }
-    case 'deepstate': {
-      const ts = params.get('ts');
-      const seg = ts ? encodeURIComponent(ts) : 'last';
-      return { url: `https://deepstatemap.live/api/history/${seg}/geojson`, ttl: 3600 };
+    case 'gdacs': {
+      // Global Disaster Alert & Coordination System — last ~100 events / 4 days
+      // as a GeoJSON FeatureCollection with per-event alert levels (Green/Orange/Red).
+      return { url: 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP', ttl: 900 };
     }
     case 'geocode': {
       const q = params.get('q') || '';
@@ -99,66 +96,6 @@ function resolveUpstream(source, params) {
     default:
       return undefined;
   }
-}
-
-// --- AIS snapshot via aisstream.io WebSocket (key stays server-side) ----------
-async function aisSnapshot(bbox) {
-  const key = (process.env.AISSTREAM_API_KEY ?? '').trim();
-  if (!key) return { ships: [], _disabled: 'AISSTREAM_API_KEY not set' };
-
-  // Prefer the runtime global WebSocket (Node 22+), fall back to the `ws` package.
-  let WS = globalThis.WebSocket;
-  if (!WS) {
-    try { WS = (await import('ws')).default; } catch { /* not installed */ }
-  }
-  if (!WS) return { ships: [], _unsupported: 'WebSocket not available in runtime' };
-
-  // bbox = west,south,east,north  ->  aisstream wants [[lat1,lon1],[lat2,lon2]]
-  let box = [[-90, -180], [90, 180]];
-  if (bbox) {
-    const [w, s, e, n] = bbox.split(',').map(Number);
-    if ([w, s, e, n].every(Number.isFinite)) box = [[s, w], [n, e]];
-  }
-
-  return await new Promise((resolve) => {
-    const ships = new Map();
-    let ws;
-    const done = () => {
-      try { ws && ws.close(); } catch {}
-      resolve({ ships: [...ships.values()] });
-    };
-    const timer = setTimeout(done, 3000);
-    try {
-      ws = new WS('wss://stream.aisstream.io/v0/stream');
-      ws.onopen = () => ws.send(JSON.stringify({
-        APIKey: key,
-        BoundingBoxes: [box],
-        FilterMessageTypes: ['PositionReport'],
-      }));
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
-          const pr  = msg?.Message?.PositionReport;
-          const meta = msg?.MetaData;
-          if (!pr || meta == null) return;
-          const mmsi = meta.MMSI;
-          ships.set(mmsi, {
-            mmsi,
-            lat: pr.Latitude,
-            lon: pr.Longitude,
-            heading: (pr.TrueHeading != null && pr.TrueHeading < 360) ? pr.TrueHeading : pr.Cog,
-            speed: pr.Sog,
-            name: (meta.ShipName || '').trim(),
-          });
-          if (ships.size >= 500) { clearTimeout(timer); done(); }
-        } catch {}
-      };
-      ws.onerror = () => { clearTimeout(timer); done(); };
-    } catch {
-      clearTimeout(timer);
-      resolve({ ships: [], _error: 'ws init failed' });
-    }
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -178,17 +115,13 @@ export default async function handler(req, res) {
     res.end(JSON.stringify(obj));
   };
 
-  // AIS — special path (WebSocket snapshot, not a passthrough fetch)
-  if (source === 'ships') {
-    const snap = await aisSnapshot(params.get('bbox'));
-    return send(snap, 200, 60);
-  }
+  const debug = params.get('debug') === '1';
 
   const resolved = resolveUpstream(source, params);
   if (!resolved) {
     return send({
       error: 'Unknown or missing `source` parameter.',
-      valid: ['earthquakes', 'events', 'aircraft', 'ships', 'gdelt', 'deepstate', 'geocode'],
+      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'gdacs', 'geocode'],
     }, 400);
   }
 
@@ -197,17 +130,6 @@ export default async function handler(req, res) {
     'User-Agent': 'worldart-globe/2.0 (non-commercial open-source; https://github.com/jem-jem-jem/worldart-globe)',
     'Accept':     'application/json,application/geo+json',
   };
-
-  // DeepState sits behind Cloudflare and blocks non-browser agents from
-  // datacenter IPs, so present browser-like headers for that source.
-  if (source === 'deepstate') {
-    reqHeaders['User-Agent'] =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-    reqHeaders['Accept']          = 'application/json, text/plain, */*';
-    reqHeaders['Accept-Language'] = 'en-US,en;q=0.9';
-    reqHeaders['Referer']         = 'https://deepstatemap.live/';
-    reqHeaders['Origin']          = 'https://deepstatemap.live';
-  }
 
   try {
     const resp = await fetch(upstream, {
@@ -221,6 +143,15 @@ export default async function handler(req, res) {
 
     const body        = await resp.text();
     const contentType = resp.headers.get('content-type') ?? 'application/json; charset=utf-8';
+
+    // ?debug=1 — surface exactly what the upstream returned (status, type, snippet).
+    if (debug) {
+      return send({
+        source, upstream, status: resp.status, contentType,
+        bodyStart: body.slice(0, 600), length: body.length,
+      });
+    }
+
     res.writeHead(resp.status, {
       'content-type':                contentType,
       'cache-control':               `public, s-maxage=${ttl}, stale-while-revalidate=${ttl * 4}`,
