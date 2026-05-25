@@ -16,6 +16,7 @@
       --c-aircraft: #ffffff;
       --c-military: #b0ff70;
       --c-conflict: #ff3b3b;
+      --c-ship:     #00cfff;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
@@ -208,7 +209,7 @@
 
   <div class="hud hud--tl">
     <div class="title"><span class="pulse"></span>World Globe — Live Planetary Intelligence</div>
-    <div class="subtitle">USGS · NASA · ADS-B · GDELT · GDACS</div>
+    <div class="subtitle">USGS · NASA · ADS-B · GDELT · GDACS · AIS</div>
   </div>
 
   <div class="hud hud--tr">
@@ -234,6 +235,7 @@
       <span id="time-label" class="tlabel">NOW</span>
     </div>
     <div class="seg">
+      <button id="rotate-btn" class="btn active" title="Toggle globe auto-rotation">ROTATE</button>
       <button id="base-btn"  class="btn" title="Cycle surface: night → blue marble → live satellite">NIGHT</button>
       <button id="bord-btn"  class="btn" title="Country borders">BORDERS</button>
       <button id="term-btn"  class="btn" title="Day / night terminator">DAY·NIGHT</button>
@@ -274,6 +276,7 @@
       mil:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l1.4 5.6L19 13v1.4l-6.2-1.8L12 19h-0l-0.8-6.4L5 14.4V13l5.6-2.4z" fill="currentColor" stroke="none"/><rect x="3.5" y="3.5" width="17" height="17" transform="rotate(45 12 12)"/></svg>`,
       burst: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5"><path d="M12 2l2.2 5.5L20 6l-3 4.5L22 13l-5.6.6L17 19l-5-3-5 3 .6-5.4L2 13l5-2.5L4 6l5.8 1.5z"/></svg>`,
       alert: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="#000" stroke-width="0.5"><path d="M12 2L1 21h22L12 2z"/><rect x="11" y="9" width="2" height="6" fill="#000" stroke="none"/><rect x="11" y="17" width="2" height="2" fill="#000" stroke="none"/></svg>`,
+      ship:  `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2v1h2v2h-2v7.28l5.19 2.6-.9 1.79L12 16.5l-6.29 2.17-.9-1.79L10 14.28V7H8V5h2V4a2 2 0 0 1 2-2z"/></svg>`,
     };
 
     // ============================================================
@@ -334,6 +337,14 @@
         size: () => 17, altitude: d => Math.min(0.05, 0.01 + ((d.altitude || 0) / 12000) * 0.035),
         rotate: d => d.heading, ringIf: () => false,
       },
+      // ---- Maritime (live only, requires AISHUB_KEY) ----
+      ships: {
+        label: 'SHIPS', group: 'maritime', icon: ICON.ship, live: true,
+        color: '#00cfff', source: 'ships',
+        size: () => 14, altitude: () => 0.003,
+        rotate: d => d.heading,
+        ringIf: () => false,
+      },
       // ---- Disaster alerts (GDACS, severity-rated) ----
       alerts: {
         label: 'ALERTS', group: 'alerts', icon: ICON.alert,
@@ -350,9 +361,10 @@
       alerts:   { label: 'Alerts',   keys: ['alerts'] },
       conflict: { label: 'Conflict', keys: ['conflict'] },
       air:      { label: 'Air',      keys: ['aircraft', 'military'] },
+      maritime: { label: 'Maritime', keys: ['ships'] },
     };
 
-    const MAX_MARKERS = { aircraft: 150, military: 100, conflict: 120, default: 150 };
+    const MAX_MARKERS = { aircraft: 150, military: 100, conflict: 120, ships: 200, default: 150 };
 
     // ============================================================
     // 2. Sources + polling cadence
@@ -364,6 +376,7 @@
       aircraft:    20_000,
       military:    30_000,
       gdacs:       900_000,
+      ships:       60_000,
     };
 
     // ============================================================
@@ -456,13 +469,33 @@
           };
         }).filter(Boolean);
       },
+      // AIS Hub — response is [{meta}, [vessel, ...]] or { vessels:[], _unconfigured:true }
+      ships(resp) {
+        if (!resp || resp._unconfigured) return [];
+        const vessels = Array.isArray(resp) ? resp[1] : (resp.vessels || []);
+        const TYPE_NAME = { 30:'Fishing', 36:'Sailing', 37:'Pleasure craft',
+                            60:'Passenger', 70:'Cargo', 80:'Tanker' };
+        return (vessels || []).filter(v => v.LATITUDE != null && v.LONGITUDE != null).map(v => {
+          const bucket = Math.floor((v.TYPE || 0) / 10) * 10;
+          const name   = (v.NAME || '').trim();
+          return {
+            lat: v.LATITUDE, lon: v.LONGITUDE,
+            mmsi: v.MMSI,
+            heading: v.HEADING != null && v.HEADING !== 511 ? v.HEADING : v.COG,
+            velocity: v.SOG,
+            place: name || `MMSI ${v.MMSI}`,
+            type:  `${TYPE_NAME[bucket] || 'Vessel'} · ${name || v.MMSI}`,
+            country: v.DEST ? `→ ${v.DEST}` : undefined,
+          };
+        });
+      },
     };
 
     // ============================================================
     // 4. State
     // ============================================================
     const state = {};
-    Object.keys(LAYERS).forEach(k => state[k] = { data: [], visible: true });
+    Object.keys(LAYERS).forEach(k => state[k] = { data: [], visible: true, _unconfigured: false });
     let timeMode = 'live';          // 'live' or a Date (selected day)
     const ui = { borders: false, terminator: false };
     let baseMode = 0;               // 0 = night, 1 = blue marble, 2 = live satellite (GIBS)
@@ -523,13 +556,18 @@
       .polygonAltitude(f => f._alt ?? 0.006)
       (document.getElementById('globe'));
 
-    globe.controls().autoRotate = false;
-    globe.controls().enableDamping = true;
-    globe.controls().dampingFactor = 0.08;
+    globe.controls().autoRotate      = true;
+    globe.controls().autoRotateSpeed = 0.5;
+    globe.controls().enableDamping   = true;
+    globe.controls().dampingFactor   = 0.08;
     globe.pointOfView({ lat: 20, lng: 10, altitude: 2.4 }, 0);
 
     function resize() { globe.width(window.innerWidth); globe.height(window.innerHeight); }
     window.addEventListener('resize', resize); resize();
+
+    // Stop auto-rotation the moment a user starts dragging (so the globe doesn't
+    // resume spinning after they've intentionally positioned the view).
+    globe.controls().addEventListener('start', () => stopRotate());
 
     // When the camera settles: refetch view-bounded layers (aircraft) and
     // recompose so far-hemisphere markers are re-culled for the new viewpoint.
@@ -545,6 +583,14 @@
     // ============================================================
     // 6. Marker factory + tooltip
     // ============================================================
+    let pinnedTip = false;
+
+    function stopRotate() {
+      globe.controls().autoRotate = false;
+      const rb = document.getElementById('rotate-btn');
+      if (rb) rb.classList.remove('active');
+    }
+
     function makeMarker(d) {
       const el = document.createElement('div');
       el.className = 'marker' + (d.pulse ? ' pulse' : '') + (d.alert ? ' alert' : '');
@@ -555,8 +601,15 @@
         const svg = el.firstElementChild;
         if (svg) svg.style.transform = `rotate(${d.rotate}deg)`;
       }
-      el.addEventListener('mouseenter', () => showTip(d));
-      el.addEventListener('mouseleave', () => showTip(null));
+      el.addEventListener('mouseenter', () => { if (!pinnedTip) showTip(d); });
+      el.addEventListener('mouseleave', () => { if (!pinnedTip) showTip(null); });
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        stopRotate();
+        pinnedTip = true;
+        showTip(d);
+        globe.pointOfView({ lat: d.lat, lng: d.lng ?? d.lon, altitude: 1.2 }, 900);
+      });
       return el;
     }
 
@@ -721,6 +774,9 @@
       }
       return await fetchJSON('/api/feed?source=aircraft');
     }
+    async function fetchShips(lat, lon) {
+      return await fetchJSON(`/api/feed?source=ships&lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}`);
+    }
 
     function bumpStatus() {
       const t = new Date();
@@ -758,6 +814,17 @@
         out = EXTRACT.events(raw);
         for (const [key, layer] of Object.entries(LAYERS))
           if (layer.source === 'events') state[key].data = out[layer.category] || [];
+      } else if (source === 'ships') {
+        if (timeMode !== 'live') return;
+        const pov = globe.pointOfView();
+        const raw = await fetchShips(pov.lat, pov.lng);
+        if (!raw) return;
+        if (raw._unconfigured) {
+          state.ships._unconfigured = true;
+        } else {
+          state.ships._unconfigured = false;
+          state.ships.data = EXTRACT.ships(raw);
+        }
       }
       updateLegend(); compose(); updateStatus(); bumpStatus();
     }
@@ -773,9 +840,10 @@
     function refreshViewBounded() {
       if (timeMode !== 'live') return;
       if (state.aircraft.visible) refresh('aircraft');
+      if (state.ships.visible)    refresh('ships');
     }
 
-    const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'gdacs', 'aircraft', 'military'];
+    const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'gdacs', 'aircraft', 'military', 'ships'];
     let timers = [];
     function startScheduler() {
       stopScheduler();
@@ -821,6 +889,7 @@
       return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
     }
     globe.onGlobeClick(({ lat, lng }) => {
+      if (pinnedTip) { pinnedTip = false; showTip(null); }
       if (!measuring) return;
       measurePts.push({ lat, lng });
       if (measurePts.length === 2) {
@@ -886,6 +955,12 @@
       e.target.classList.toggle('active', measuring);
       if (measuring) document.getElementById('status').innerHTML = `<b>Measure:</b> click two points on the globe.`;
     });
+    document.getElementById('rotate-btn').addEventListener('click', e => {
+      const on = !globe.controls().autoRotate;
+      globe.controls().autoRotate = on;
+      if (on) globe.controls().autoRotateSpeed = 0.5;
+      e.target.classList.toggle('active', on);
+    });
     document.getElementById('search-input').addEventListener('keydown', e => {
       if (e.key === 'Enter' && e.target.value.trim()) geocode(e.target.value.trim());
     });
@@ -929,7 +1004,14 @@
       for (const key of Object.keys(LAYERS)) {
         const row = legendEl.querySelector(`[data-key="${key}"]`);
         if (!row) continue;
-        row.querySelector('[data-count]').textContent = state[key].data.length.toLocaleString();
+        const countEl = row.querySelector('[data-count]');
+        if (state[key]._unconfigured) {
+          countEl.textContent = '—';
+          countEl.title = 'Set AISHUB_KEY env var to enable';
+        } else {
+          countEl.textContent = state[key].data.length.toLocaleString();
+          countEl.title = '';
+        }
         row.classList.toggle('off', !state[key].visible);
       }
     }
@@ -945,7 +1027,8 @@
       el.innerHTML =
         `<b>${c('earthquakes')}</b> quakes · <b>${c('fires')}</b> fires · ` +
         `<b>${c('volcanoes')}</b> volcanoes · <b>${c('alerts')}</b> alerts<br>` +
-        `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft`;
+        `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft · ` +
+        `<b>${state.ships._unconfigured ? '—' : c('ships').toLocaleString()}</b> ships`;
     }
 
     // ============================================================
