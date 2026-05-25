@@ -44,6 +44,10 @@ const server = http.createServer(async (req, res) => {
   // Static
   let p = url.pathname === '/' ? '/index.html' : url.pathname;
   const filePath = path.join(PUBLIC, p);
+  if (!filePath.startsWith(PUBLIC + path.sep) && filePath !== PUBLIC) {
+    res.writeHead(403).end('Forbidden');
+    return;
+  }
   try {
     const data = await fs.readFile(filePath);
     const ext  = path.extname(filePath);
