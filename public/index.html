@@ -444,7 +444,8 @@
           if (!Array.isArray(c) || typeof c[0] !== 'number') return null;
           const [lon, lat] = c;
           const p = f.properties || {};
-          const level = p.alertlevel || p.alertLevel || 'Green';
+          const rawLevel = p.alertlevel || p.alertLevel || 'green';
+          const level = rawLevel.charAt(0).toUpperCase() + rawLevel.slice(1).toLowerCase();
           const kind  = TYPE[p.eventtype] || p.eventtype || 'Alert';
           const sev   = p.severitydata?.severitytext || p.severity || '';
           return {

@@ -10,6 +10,6 @@
     "deploy": "vercel --prod"
   },
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   }
 }

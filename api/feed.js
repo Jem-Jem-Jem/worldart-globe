@@ -102,6 +102,16 @@ function resolveUpstream(source, params) {
 // Main handler  (req: IncomingMessage, res: ServerResponse)
 // ---------------------------------------------------------------------------
 export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'access-control-allow-origin':  '*',
+      'access-control-allow-methods': 'GET, OPTIONS',
+      'access-control-max-age':       '86400',
+    });
+    res.end();
+    return;
+  }
+
   const urlObj = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
   const source = urlObj.searchParams.get('source');
   const params = urlObj.searchParams;
