@@ -8,10 +8,14 @@
 //   /api/feed?source=gdelt[&from=ISO&to=ISO]
 //   /api/feed?source=gdacs
 //   /api/feed?source=geocode&q=...
+//   /api/feed?source=ships&lat=..&lon=..              (requires AISHUB_KEY env var)
 //
 // Aircraft is deliberately NOT the primary path from this server: community
 // ADS-B feeds block datacenter IPs, so the browser fetches them directly
 // (residential IP); this proxy is only a fallback.
+//
+// Ships (AIS Hub): requires AISHUB_KEY env var (free signup at aishub.net).
+// Returns { vessels: [], _unconfigured: true } gracefully when key is absent.
 
 const DEFAULT_TTL = 60;
 
@@ -93,6 +97,23 @@ function resolveUpstream(source, params) {
       u.searchParams.set('limit', '1');
       return { url: u.toString(), ttl: 86400 };
     }
+    case 'ships': {
+      const key = process.env.AISHUB_KEY;
+      if (!key) return { unconfigured: true };
+      const lat = parseFloat(params.get('lat') || '0');
+      const lon = parseFloat(params.get('lon') || '0');
+      const pad = 15;
+      const u = new URL('http://data.aishub.net/ws.php');
+      u.searchParams.set('username', key);
+      u.searchParams.set('format', '1');
+      u.searchParams.set('output', 'json');
+      u.searchParams.set('compress', '0');
+      u.searchParams.set('latmin', Math.max(-90,  lat - pad).toFixed(2));
+      u.searchParams.set('latmax', Math.min(90,   lat + pad).toFixed(2));
+      u.searchParams.set('lonmin', Math.max(-180, lon - pad).toFixed(2));
+      u.searchParams.set('lonmax', Math.min(180,  lon + pad).toFixed(2));
+      return { url: u.toString(), ttl: 60 };
+    }
     default:
       return undefined;
   }
@@ -131,8 +152,11 @@ export default async function handler(req, res) {
   if (!resolved) {
     return send({
       error: 'Unknown or missing `source` parameter.',
-      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'gdacs', 'geocode'],
+      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'gdacs', 'geocode', 'ships'],
     }, 400);
+  }
+  if (resolved.unconfigured) {
+    return send({ vessels: [], _unconfigured: true });
   }
 
   const { url: upstream, ttl } = resolved;
