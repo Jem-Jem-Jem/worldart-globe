@@ -174,14 +174,67 @@
     }
     .time .tlabel.past { color: #ffd400; }
 
+    /* Legend hamburger toggle — hidden on desktop */
+    .legend-btn {
+      display: none;
+      position: fixed; top: 16px; right: 16px; z-index: 110;
+      font: inherit; font-size: 16px; line-height: 1;
+      color: rgba(255,255,255,0.8); background: rgba(8,10,22,0.75);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;
+      padding: 7px 10px; cursor: pointer; pointer-events: auto;
+    }
+    .legend-btn:hover { color: #fff; }
+
     @media (max-width: 720px) {
-      .hud--tl { max-width: 60%; }
-      .title { font-size: 9px; letter-spacing: 0.18em; }
+      /* Title */
+      .hud--tl { max-width: 65%; }
+      .title  { font-size: 9px; letter-spacing: 0.16em; }
       .subtitle { font-size: 7px; }
-      .legend { font-size: 9px; }
+
+      /* Status / attrib */
       .status, .attrib { font-size: 8px; }
-      .time { min-width: 200px; }
-      .search input { width: 90px; }
+      .hud--bl, .hud--br { bottom: 80px; }   /* clear the controls bar */
+
+      /* Legend panel: slide-in from top-right */
+      .legend-btn { display: block; }
+      .hud--tr {
+        top: 0; right: 0; max-width: 80vw; max-height: 80vh;
+        overflow-y: auto; overflow-x: hidden;
+        background: rgba(8,10,22,0.92); backdrop-filter: blur(10px);
+        border-left: 1px solid rgba(255,255,255,0.10);
+        border-bottom: 1px solid rgba(255,255,255,0.10);
+        border-radius: 0 0 0 8px;
+        padding: 52px 14px 14px;
+        transform: translateX(100%); transition: transform 0.25s ease;
+        pointer-events: auto; z-index: 100;
+      }
+      .hud--tr.legend-open { transform: translateX(0); }
+      .legend { font-size: 10px; }
+
+      /* Controls: stack and enlarge touch targets */
+      .controls { bottom: 10px; gap: 6px; }
+      .controls .seg { padding: 5px 7px; gap: 5px; }
+      .btn { padding: 10px 10px; font-size: 8px; min-height: 38px; }
+      .time { min-width: 0; flex: 1 1 100%; order: -1; }
+      .time input[type=range] { min-height: 36px; }
+      .search { flex: 1 1 auto; }
+      .search input { width: 100px; }
+
+      /* Tooltip → bottom sheet */
+      .tip {
+        left: 0 !important; right: 0; bottom: 70px; top: auto !important;
+        transform: none; border-radius: 8px 8px 0 0;
+        max-width: 100%; border-left: none; border-right: none; border-bottom: none;
+        padding: 14px 18px; font-size: 12px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .title { font-size: 8px; }
+      .subtitle { display: none; }
+      .hud--bl { display: none; }
+      .btn { padding: 9px 7px; font-size: 7px; }
     }
 
     /* Boot */
@@ -212,7 +265,8 @@
     <div class="subtitle">USGS · NASA · ADS-B · GDELT · GDACS · AIS</div>
   </div>
 
-  <div class="hud hud--tr">
+  <button id="legend-btn" class="legend-btn" title="Toggle layers" aria-label="Layers">☰</button>
+  <div class="hud hud--tr" id="legend-panel">
     <div id="legend" class="legend"></div>
   </div>
 
@@ -1073,7 +1127,32 @@
     globe.controls().addEventListener('change', debounce(updateHash, 500));
 
     // ============================================================
-    // 15. Boot
+    // ============================================================
+    // 15. Mobile
+    // ============================================================
+    // Hamburger toggle for the legend panel on small screens.
+    const legendPanel = document.getElementById('legend-panel');
+    document.getElementById('legend-btn').addEventListener('click', () => {
+      legendPanel.classList.toggle('legend-open');
+    });
+    // Close the panel when tapping outside it.
+    document.addEventListener('click', e => {
+      if (legendPanel.classList.contains('legend-open') &&
+          !legendPanel.contains(e.target) &&
+          e.target.id !== 'legend-btn') {
+        legendPanel.classList.remove('legend-open');
+      }
+    });
+
+    // Touch-move: position tooltip at first touch point (desktop mousemove already handles mouse).
+    window.addEventListener('touchmove', e => {
+      const t = e.changedTouches[0];
+      tip.style.left = t.clientX + 'px';
+      tip.style.top  = t.clientY + 'px';
+    }, { passive: true });
+
+    // ============================================================
+    // 16. Boot
     // ============================================================
     renderLegend();
     updateStatus();
