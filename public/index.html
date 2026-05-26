@@ -928,9 +928,9 @@
     timeRange.addEventListener('input', e => {
       clearTimeout(scrubT); const v = e.target.value;
       timeLabel.textContent = v === '0' ? 'NOW' : '…';
-      scrubT = setTimeout(() => setTimeFromSlider(v), 350);
+      scrubT = setTimeout(() => { setTimeFromSlider(v); updateHash(); }, 350);
     });
-    liveBtn.addEventListener('click', () => { timeRange.value = 0; setTimeFromSlider(0); });
+    liveBtn.addEventListener('click', () => { timeRange.value = 0; setTimeFromSlider(0); updateHash(); });
 
     const BASE_LABELS = ['NIGHT', 'MARBLE', 'SAT·LIVE'];
     document.getElementById('base-btn').addEventListener('click', e => {
@@ -994,6 +994,7 @@
             state[key].visible = !state[key].visible;
             row.classList.toggle('off', !state[key].visible);
             compose();
+            updateHash();
           });
           rows.appendChild(row);
         }
@@ -1032,7 +1033,47 @@
     }
 
     // ============================================================
-    // 14. Boot
+    // 14. Permalink
+    // ============================================================
+    function debounce(fn, ms) {
+      let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+    }
+
+    function updateHash() {
+      const pov    = globe.pointOfView();
+      const layers = Object.keys(state).filter(k => state[k].visible).join(',');
+      const h = `#lat=${pov.lat.toFixed(2)}&lng=${pov.lng.toFixed(2)}&alt=${pov.altitude.toFixed(2)}` +
+                `&layers=${layers}&t=${timeRange.value}`;
+      history.replaceState(null, '', h);
+    }
+
+    // Restore camera, layer visibility, and time mode from URL hash (no fetch — scheduler handles that).
+    (function restoreHash() {
+      const raw = window.location.hash.slice(1);
+      if (!raw) return;
+      const p = Object.fromEntries(raw.split('&').map(s => { const [k, v] = s.split('='); return [k, v]; }));
+      if (p.lat && p.lng && p.alt) {
+        globe.pointOfView({ lat: +p.lat, lng: +p.lng, altitude: +p.alt }, 0);
+      }
+      if (p.layers) {
+        const vis = new Set(p.layers.split(','));
+        Object.keys(state).forEach(k => { state[k].visible = vis.has(k); });
+      }
+      if (p.t && p.t !== '0') {
+        const v = +p.t;
+        const d = new Date(); d.setUTCDate(d.getUTCDate() + v);
+        timeMode = d;
+        timeRange.value = v;
+        timeLabel.textContent = d.toISOString().slice(0, 10);
+        timeLabel.classList.add('past');
+        liveBtn.classList.remove('active');
+      }
+    })();
+
+    globe.controls().addEventListener('change', debounce(updateHash, 500));
+
+    // ============================================================
+    // 15. Boot
     // ============================================================
     renderLegend();
     updateStatus();
