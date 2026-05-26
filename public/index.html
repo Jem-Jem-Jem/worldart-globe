@@ -676,7 +676,8 @@
         stopRotate();
         pinnedTip = true;
         showTip(d);
-        globe.pointOfView({ lat: d.lat, lng: d.lng ?? d.lon, altitude: 1.2 }, 900);
+        const { altitude } = globe.pointOfView();
+        globe.pointOfView({ lat: d.lat, lng: d.lng ?? d.lon, altitude }, 900);
       });
       return el;
     }
@@ -869,7 +870,18 @@
         state[source].data = EXTRACT.adsb(raw);
         markOk(source);
       } else if (source === 'gdelt') {
-        const raw = await fetchJSON(`/api/feed?source=gdelt${timeParams()}`);
+        let raw = null;
+        if (timeMode === 'live') {
+          // GDELT supports CORS — try browser-direct first so residential IP is used
+          // instead of Vercel datacenter IP, which GDELT tends to block/rate-limit.
+          const u = new URL('https://api.gdeltproject.org/api/v2/geo/geo');
+          u.searchParams.set('query', '(conflict OR airstrike OR shelling OR offensive OR clashes OR militants OR insurgency)');
+          u.searchParams.set('format', 'GeoJSON');
+          u.searchParams.set('mode', 'PointData');
+          u.searchParams.set('timespan', '1d');
+          raw = await fetchJSON(u.toString());
+        }
+        if (!raw) raw = await fetchJSON(`/api/feed?source=gdelt${timeParams()}`);
         if (!raw) { markErr('conflict'); return; }
         state.conflict.data = EXTRACT.gdelt(raw);
         markOk('conflict');
@@ -898,6 +910,7 @@
         if (!raw) { markErr('ships'); return; }
         if (raw._unconfigured) {
           state.ships._unconfigured = true;
+          state.ships.visible = false;  // auto-hide — no point cluttering the map
         } else {
           state.ships._unconfigured = false;
           state.ships.data = EXTRACT.ships(raw);
@@ -1098,8 +1111,8 @@
         const s = state[key];
         if (s._unconfigured) {
           countEl.textContent = '—';
-          countEl.title = 'Set AISHUB_KEY env var to enable';
-          if (ageEl) { ageEl.textContent = 'key missing'; ageEl.className = 'age err'; }
+          countEl.title = 'Set AISHUB_KEY env var to enable (free signup at aishub.net)';
+          if (ageEl) { ageEl.textContent = 'not configured'; ageEl.className = 'age'; }
         } else if (s.error) {
           countEl.textContent = '!';
           countEl.title = 'Feed unavailable';
