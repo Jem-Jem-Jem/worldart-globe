@@ -106,6 +106,11 @@
       color: rgba(255, 255, 255, 0.45); min-width: 44px; text-align: right;
       font-variant-numeric: tabular-nums;
     }
+    .legend .age {
+      font-size: 7px; letter-spacing: 0.04em;
+      color: rgba(255,255,255,0.25); display: block; line-height: 1.2;
+    }
+    .legend .age.err { color: #ff4444; font-weight: 600; }
     .legend .label { text-transform: uppercase; }
 
     /* Tooltip */
@@ -436,6 +441,14 @@
     // ============================================================
     // 3. Extractors — coerce upstream JSON shapes to flat point arrays
     // ============================================================
+    // Shallow (0–70 km) → cyan, intermediate (70–300 km) → teal, deep (300+) → indigo.
+    function depthColor(km) {
+      if (km == null || km < 0) return '#6cdfff';
+      if (km < 70)  return '#6cdfff';
+      if (km < 300) return '#00b4a0';
+      return '#7b5ea7';
+    }
+
     const EXTRACT = {
       earthquakes(resp) {
         return (resp.features || []).map(f => {
@@ -443,6 +456,7 @@
           const p = f.properties || {};
           return {
             lat, lon, depth, magnitude: p.mag,
+            color: depthColor(depth),
             place: p.place || 'Unknown', time: p.time,
             type: `Magnitude ${(p.mag ?? 0).toFixed(1)} earthquake`,
           };
@@ -549,7 +563,7 @@
     // 4. State
     // ============================================================
     const state = {};
-    Object.keys(LAYERS).forEach(k => state[k] = { data: [], visible: true, _unconfigured: false });
+    Object.keys(LAYERS).forEach(k => state[k] = { data: [], visible: true, _unconfigured: false, lastUpdated: null, error: false });
     let timeMode = 'live';          // 'live' or a Date (selected day)
     const ui = { borders: false, terminator: false };
     let baseMode = 0;               // 0 = night, 1 = blue marble, 2 = live satellite (GIBS)
@@ -840,6 +854,9 @@
       setTimeout(() => document.getElementById('boot').style.display = 'none', 1200);
     }
 
+    function markOk(...keys)  { keys.forEach(k => { if (state[k]) { state[k].error = false; state[k].lastUpdated = Date.now(); } }); }
+    function markErr(...keys) { keys.forEach(k => { if (state[k]) state[k].error = true; }); updateLegend(); }
+
     async function refresh(source) {
       let out;
       if (source === 'aircraft' || source === 'military') {
@@ -848,36 +865,43 @@
         const raw = source === 'aircraft'
           ? await fetchAircraft(pov.lat, pov.lng)
           : await fetchMilitary();
-        if (!raw) return;
+        if (!raw) { markErr(source); return; }
         state[source].data = EXTRACT.adsb(raw);
+        markOk(source);
       } else if (source === 'gdelt') {
         const raw = await fetchJSON(`/api/feed?source=gdelt${timeParams()}`);
-        if (!raw) return;
+        if (!raw) { markErr('conflict'); return; }
         state.conflict.data = EXTRACT.gdelt(raw);
+        markOk('conflict');
       } else if (source === 'gdacs') {
         const raw = await fetchJSON('/api/feed?source=gdacs');
-        if (!raw) return;
+        if (!raw) { markErr('alerts'); return; }
         state.alerts.data = EXTRACT.gdacs(raw);
+        markOk('alerts');
       } else if (source === 'earthquakes') {
         const raw = await fetchJSON(`/api/feed?source=earthquakes${timeParams()}`);
-        if (!raw) return;
+        if (!raw) { markErr('earthquakes'); return; }
         state.earthquakes.data = EXTRACT.earthquakes(raw);
+        markOk('earthquakes');
       } else if (source === 'events') {
         const raw = await fetchJSON(`/api/feed?source=events${timeParams()}`);
-        if (!raw) return;
+        const eventKeys = Object.keys(LAYERS).filter(k => LAYERS[k].source === 'events');
+        if (!raw) { markErr(...eventKeys); return; }
         out = EXTRACT.events(raw);
         for (const [key, layer] of Object.entries(LAYERS))
           if (layer.source === 'events') state[key].data = out[layer.category] || [];
+        markOk(...eventKeys);
       } else if (source === 'ships') {
         if (timeMode !== 'live') return;
         const pov = globe.pointOfView();
         const raw = await fetchShips(pov.lat, pov.lng);
-        if (!raw) return;
+        if (!raw) { markErr('ships'); return; }
         if (raw._unconfigured) {
           state.ships._unconfigured = true;
         } else {
           state.ships._unconfigured = false;
           state.ships.data = EXTRACT.ships(raw);
+          markOk('ships');
         }
       }
       updateLegend(); compose(); updateStatus(); bumpStatus();
@@ -1041,7 +1065,7 @@
           const row = document.createElement('div');
           row.className = 'row'; row.dataset.key = key;
           row.innerHTML =
-            `<span class="count" data-count></span>` +
+            `<span class="count"><span data-count></span><span class="age" data-age></span></span>` +
             `<span class="label">${layer.label}</span>` +
             `<span class="ico" style="color:${layer.color}">${layer.icon}</span>`;
           row.addEventListener('click', () => {
@@ -1055,21 +1079,42 @@
         g.appendChild(rows); legendEl.appendChild(g);
       }
     }
+    function timeAgo(ts) {
+      if (!ts) return '';
+      const s = Math.floor((Date.now() - ts) / 1000);
+      if (s < 30) return 'just now';
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}m ago`;
+      return `${Math.floor(m / 60)}h ago`;
+    }
+
     function updateLegend() {
       for (const key of Object.keys(LAYERS)) {
         const row = legendEl.querySelector(`[data-key="${key}"]`);
         if (!row) continue;
         const countEl = row.querySelector('[data-count]');
-        if (state[key]._unconfigured) {
+        const ageEl   = row.querySelector('[data-age]');
+        const s = state[key];
+        if (s._unconfigured) {
           countEl.textContent = '—';
           countEl.title = 'Set AISHUB_KEY env var to enable';
+          if (ageEl) { ageEl.textContent = 'key missing'; ageEl.className = 'age err'; }
+        } else if (s.error) {
+          countEl.textContent = '!';
+          countEl.title = 'Feed unavailable';
+          if (ageEl) { ageEl.textContent = 'error'; ageEl.className = 'age err'; }
         } else {
-          countEl.textContent = state[key].data.length.toLocaleString();
+          countEl.textContent = s.data.length.toLocaleString();
           countEl.title = '';
+          if (ageEl) { ageEl.textContent = timeAgo(s.lastUpdated); ageEl.className = 'age'; }
         }
-        row.classList.toggle('off', !state[key].visible);
+        row.classList.toggle('off', !s.visible);
       }
     }
+
+    // Refresh timestamps in legend every 30s without refetching data.
+    setInterval(updateLegend, 30_000);
 
     // ============================================================
     // 13. Status line
