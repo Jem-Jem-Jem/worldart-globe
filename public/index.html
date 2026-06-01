@@ -717,6 +717,15 @@
     }
     const MARKER_BUDGET = 350;   // global cap on simultaneously-rendered DOM markers
 
+    // Defers API-response recompositions to the next frame so queued input events
+    // are flushed first; coalesces multiple concurrent fetch completions into one call.
+    let _composeFrame = null;
+    function scheduleCompose() {
+      if (_composeFrame === null) {
+        _composeFrame = requestAnimationFrame(() => { _composeFrame = null; compose(); });
+      }
+    }
+
     function compose() {
       const markers = [];
       const rings   = [];
@@ -917,7 +926,7 @@
           markOk('ships');
         }
       }
-      updateLegend(); compose(); updateStatus(); bumpStatus();
+      updateLegend(); scheduleCompose(); updateStatus(); bumpStatus();
     }
 
     function viewBbox() {
@@ -951,7 +960,7 @@
       if (timeMode === 'live') refreshViewBounded();
       // Satellite surface tracks the scrubbed day — reload the WMS image for the new date.
       if (baseMode === 2) globe.globeImageUrl(gibsImageUrl());
-      compose();
+      scheduleCompose();
     }
 
     // ============================================================
