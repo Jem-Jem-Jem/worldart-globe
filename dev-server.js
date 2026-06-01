@@ -22,9 +22,11 @@ const MIME = {
   '.jpg':  'image/jpeg',
 };
 
-// Import the actual edge function and adapt to Node http
-const feedModule = await import('./api/feed.js');
-const feedHandler = feedModule.default;
+// Import the actual API handlers
+const feedModule     = await import('./api/feed.js');
+const aircraftModule = await import('./api/aircraft.js');
+const feedHandler     = feedModule.default;
+const aircraftHandler = aircraftModule.default;
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -34,6 +36,21 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/feed') {
     try {
       await feedHandler(req, res);
+    } catch (e) {
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: String(e) }));
+    }
+    return;
+  }
+
+  // Proxy /api/aircraft — edge function uses Web Request/Response API.
+  // Node 22 has these globals natively, so no polyfill needed.
+  if (url.pathname === '/api/aircraft') {
+    try {
+      const webReq = new Request(`http://localhost${req.url}`);
+      const webRes = await aircraftHandler(webReq);
+      res.writeHead(webRes.status, Object.fromEntries(webRes.headers));
+      res.end(Buffer.from(await webRes.arrayBuffer()));
     } catch (e) {
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: String(e) }));

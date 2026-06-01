@@ -834,14 +834,14 @@
         const j = await fetchJSON(`${base}/v2/point/${lat.toFixed(3)}/${lon.toFixed(3)}/250`);
         if (j && (j.ac || j.aircraft)) return j;
       }
-      return await fetchJSON(`/api/feed?source=aircraft&lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}&dist=250`);
+      return await fetchJSON(`/api/aircraft?lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}&dist=250`);
     }
     async function fetchMilitary() {
       for (const base of ADSB_FEEDS) {
         const j = await fetchJSON(`${base}/v2/mil`);
         if (j && (j.ac || j.aircraft)) return j;
       }
-      return await fetchJSON('/api/feed?source=aircraft');
+      return await fetchJSON('/api/aircraft');
     }
     async function fetchShips(lat, lon) {
       return await fetchJSON(`/api/feed?source=ships&lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}`);

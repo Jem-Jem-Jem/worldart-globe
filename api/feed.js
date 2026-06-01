@@ -174,6 +174,9 @@ export default async function handler(req, res) {
     if (source === 'aircraft' && [401, 403, 429].includes(resp.status)) {
       return send({ ac: [], _limited: true });
     }
+    if (source === 'gdelt' && [401, 403, 429].includes(resp.status)) {
+      return send({ features: [], _limited: true });
+    }
 
     const body        = await resp.text();
     const contentType = resp.headers.get('content-type') ?? 'application/json; charset=utf-8';
