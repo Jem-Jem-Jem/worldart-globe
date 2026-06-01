@@ -2,9 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
   "trailingSlash": false,
-  "functions": {
-    "api/aircraft.js": { "runtime": "edge" }
-  },
   "headers": [
     {
       "source": "/api/(.*)",
