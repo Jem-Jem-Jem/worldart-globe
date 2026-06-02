@@ -23,7 +23,7 @@ public upstream sources, keeping the project free, key-less, and self-deployable
 | **Disaster alerts** | GDACS | `gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP` | No | proxy |
 | **Place search** | OSM Nominatim | `nominatim.openstreetmap.org/search` | No | proxy |
 | **Country borders** | Natural Earth (110m) | GitHub raw GeoJSON | No | browser-direct |
-| **Maritime vessels** | AIS Hub | `data.aishub.net/ws.php` | Yes (free, optional) | proxy |
+| **Maritime vessels** | aisstream.io | `stream.aisstream.io/v0/stream` (WebSocket) | Yes (free, optional) | proxy |
 | **Satellite surface** | NASA Blue Marble texture / NASA GIBS daily imagery (WMS) | `gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi` | No | browser-direct |
 
 All upstream calls go through the single Vercel function `/api/feed`, which adds permissive CORS
@@ -48,7 +48,7 @@ Please don't "simplify" aircraft back into a plain server-side fetch — it will
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `AISHUB_KEY` | No | Enables the ships layer. Free signup at [aishub.net](https://www.aishub.net/). Without it the layer is silently hidden. |
+| `AISSTREAM_KEY` | No | Enables the ships layer via [aisstream.io](https://aisstream.io/) (WebSocket AIS feed, free signup). Without it the layer is silently hidden. |
 
 > Node **22.x** required.
 
@@ -98,7 +98,7 @@ npm run dev          # → http://localhost:4321  (no deps, no Vercel CLI needed
 - Concept inspired by **[worldmonitor.app](https://worldmonitor.app/)** ([source](https://github.com/koala73/worldmonitor)).
 - **USGS**, **NASA EONET / Blue Marble / GIBS** — public domain.
 - **ADS-B**: adsb.lol / airplanes.live / adsb.one — community feeds; respect their non-commercial terms.
-- **AIS Hub** — maritime vessel tracking; free tier requires attribution and non-commercial use.
+- **aisstream.io** — WebSocket AIS vessel stream; free tier, no data-sharing required.
 - **GDELT** — [The GDELT Project](https://www.gdeltproject.org/).
 - **GDACS** — [Global Disaster Alert and Coordination System](https://www.gdacs.org/) (UN/EC JRC).
 - **OpenStreetMap / Nominatim** — © OpenStreetMap contributors, per the

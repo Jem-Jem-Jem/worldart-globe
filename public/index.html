@@ -396,7 +396,7 @@
         size: () => 17, altitude: d => Math.min(0.05, 0.01 + ((d.altitude || 0) / 12000) * 0.035),
         rotate: d => d.heading, ringIf: () => false,
       },
-      // ---- Maritime (live only, requires AISHUB_KEY) ----
+      // ---- Maritime (live only, requires AISSTREAM_KEY) ----
       ships: {
         label: 'SHIPS', group: 'maritime', icon: ICON.ship, live: true,
         color: '#00cfff', source: 'ships',
@@ -537,7 +537,7 @@
           };
         }).filter(Boolean);
       },
-      // AIS Hub — response is [{meta}, [vessel, ...]] or { vessels:[], _unconfigured:true }
+      // aisstream.io — response is { vessels:[...] } or { vessels:[], _unconfigured:true }
       ships(resp) {
         if (!resp || resp._unconfigured) return [];
         const vessels = Array.isArray(resp) ? resp[1] : (resp.vessels || []);
@@ -1120,7 +1120,7 @@
         const s = state[key];
         if (s._unconfigured) {
           countEl.textContent = '—';
-          countEl.title = 'Set AISHUB_KEY env var to enable (free signup at aishub.net)';
+          countEl.title = 'Set AISSTREAM_KEY env var to enable (free signup at aisstream.io)';
           if (ageEl) { ageEl.textContent = 'not configured'; ageEl.className = 'age'; }
         } else if (s.error) {
           countEl.textContent = '!';
