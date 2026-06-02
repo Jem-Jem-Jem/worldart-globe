@@ -25,8 +25,10 @@ const MIME = {
 // Import the actual API handlers
 const feedModule     = await import('./api/feed.js');
 const aircraftModule = await import('./api/aircraft.js');
+const intelModule    = await import('./api/intelligence.js');
 const feedHandler     = feedModule.default;
 const aircraftHandler = aircraftModule.default;
+const intelHandler    = intelModule.default;
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -36,6 +38,17 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/feed') {
     try {
       await feedHandler(req, res);
+    } catch (e) {
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: String(e) }));
+    }
+    return;
+  }
+
+  // Proxy /api/intelligence — Node (req, res) signature like /api/feed.
+  if (url.pathname === '/api/intelligence') {
+    try {
+      await intelHandler(req, res);
     } catch (e) {
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: String(e) }));

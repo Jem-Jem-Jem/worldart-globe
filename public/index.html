@@ -130,6 +130,40 @@
     .tip .t-place { font-weight: 600; margin-top: 3px; }
     .tip .t-meta { color: rgba(255, 255, 255, 0.55); font-size: 10px; margin-top: 4px; }
 
+    /* Expanded intelligence brief */
+    .detail {
+      position: fixed; right: 16px; bottom: 16px; width: 340px; max-width: calc(100vw - 32px);
+      background: rgba(8, 10, 22, 0.92); backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 59, 59, 0.35); border-left: 3px solid #ff3b3b;
+      border-radius: 6px; padding: 14px 16px; z-index: 120;
+      display: none; pointer-events: auto; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+    .detail.open { display: block; }
+    .detail-close {
+      position: absolute; top: 8px; right: 10px; background: none; border: none;
+      color: rgba(255, 255, 255, 0.5); font-size: 20px; line-height: 1; cursor: pointer;
+    }
+    .detail-close:hover { color: #fff; }
+    .detail .d-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .detail .d-badge {
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600;
+      color: #ff6b6b; border: 1px solid rgba(255, 59, 59, 0.4); border-radius: 3px; padding: 2px 7px;
+    }
+    .detail .d-sev { font-size: 10px; letter-spacing: 0.18em; }
+    .detail .d-place { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+    .detail .d-headline { font-size: 11px; color: rgba(255, 255, 255, 0.85); line-height: 1.45; margin-bottom: 8px; }
+    .detail .d-summary { font-size: 11px; color: rgba(255, 255, 255, 0.7); line-height: 1.55; margin-bottom: 10px; }
+    .detail .d-foot {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      font-size: 9px; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.45);
+      border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px;
+    }
+    .detail .d-foot a {
+      color: #ff8a8a; text-decoration: none; white-space: nowrap;
+      border-bottom: 1px dotted rgba(255, 138, 138, 0.4);
+    }
+    .detail .d-foot a:hover { color: #fff; }
+
     /* Status line */
     .status { font-size: 10px; line-height: 1.7; letter-spacing: 0.05em; color: rgba(255, 255, 255, 0.5); }
     .status b { color: rgba(255, 255, 255, 0.9); font-weight: normal; }
@@ -267,7 +301,7 @@
 
   <div class="hud hud--tl">
     <div class="title"><span class="pulse"></span>World Globe — Live Planetary Intelligence</div>
-    <div class="subtitle">USGS · NASA · ADS-B · GDELT · GDACS · AIS</div>
+    <div class="subtitle">USGS · NASA · ADS-B · OSINT·AI · GDACS · AIS</div>
   </div>
 
   <button id="legend-btn" class="legend-btn" title="Toggle layers" aria-label="Layers">☰</button>
@@ -309,6 +343,22 @@
     <div class="t-type" id="t-type"></div>
     <div class="t-place" id="t-place"></div>
     <div class="t-meta" id="t-meta"></div>
+  </div>
+
+  <!-- Expanded intelligence brief (conflict layer) -->
+  <div id="detail" class="detail">
+    <button id="detail-close" class="detail-close" aria-label="Close">×</button>
+    <div class="d-head">
+      <span class="d-badge" id="d-badge"></span>
+      <span class="d-sev" id="d-sev"></span>
+    </div>
+    <div class="d-place" id="d-place"></div>
+    <div class="d-headline" id="d-headline"></div>
+    <div class="d-summary" id="d-summary"></div>
+    <div class="d-foot">
+      <span id="d-meta"></span>
+      <a id="d-src" href="#" target="_blank" rel="noopener">Read source ↗</a>
+    </div>
   </div>
 
   <div id="boot" class="boot">
@@ -374,13 +424,13 @@
         color: '#3a82ff', source: 'events', category: 'floods',
         size: () => 17, altitude: () => 0.008, ringIf: () => false,
       },
-      // ---- Conflict / OSINT ----
+      // ---- Conflict / OSINT (news → Gemini intelligence pipeline) ----
       conflict: {
         label: 'CONFLICT', group: 'conflict', icon: ICON.burst,
-        color: '#ff3b3b', source: 'gdelt',
-        size:     d => 15 + Math.min(10, Math.log10((d.count || 1) + 1) * 6),
-        altitude: () => 0.012, pulse: d => (d.count || 0) >= 10,
-        ringIf:   d => (d.count || 0) >= 5, ringMaxR: () => 2.5,
+        color: '#ff3b3b', source: 'intelligence',
+        size:     d => 14 + (d.severity || 1) * 2.5,
+        altitude: () => 0.012, pulse: d => (d.severity || 0) >= 4,
+        ringIf:   d => (d.severity || 0) >= 3, ringMaxR: d => 1.5 + (d.severity || 0) * 0.4,
       },
       // ---- Air (live only) ----
       aircraft: {
@@ -431,7 +481,7 @@
     const REFRESH_MS = {
       earthquakes: 60_000,
       events:      300_000,
-      gdelt:       900_000,
+      intelligence: 1_800_000,
       aircraft:    20_000,
       military:    30_000,
       gdacs:       900_000,
@@ -502,17 +552,22 @@
             };
           });
       },
-      // GDELT GEO 2.0 PointData GeoJSON
-      gdelt(resp) {
-        return (resp.features || []).filter(f => f.geometry?.type === 'Point').map(f => {
-          const [lon, lat] = f.geometry.coordinates;
-          const p = f.properties || {};
-          return {
-            lat, lon, count: p.count || 1,
-            place: p.name || 'Reported location',
-            type: 'Conflict-related coverage (GDELT)',
-          };
-        });
+      // Intelligence pipeline — { items:[{ lat, lon, severity, eventType, summary, ... }] }
+      intelligence(resp) {
+        if (!resp || resp._unconfigured) return [];
+        return (resp.items || []).filter(i => i.lat != null && i.lon != null).map(i => ({
+          lat: i.lat, lon: i.lon,
+          severity: i.severity || 1,
+          eventType: i.eventType || 'Other',
+          summary: i.summary || '',
+          headline: i.headline || '',
+          srcName: i.source || '',
+          url: i.url || '',
+          published: i.published ? Date.parse(i.published) : null,
+          country: i.country || '',
+          place: i.place || 'Reported location',
+          type: `${i.eventType || 'Intelligence'} · severity ${i.severity || 1}/5`,
+        }));
       },
       // GDACS disaster alerts (GeoJSON FeatureCollection, per-event alert level)
       gdacs(resp) {
@@ -674,8 +729,13 @@
       el.addEventListener('click', e => {
         e.stopPropagation();
         stopRotate();
-        pinnedTip = true;
-        showTip(d);
+        if (d.summary) {                 // intelligence node → expanded brief
+          showTip(null); pinnedTip = false;
+          showDetail(d);
+        } else {
+          pinnedTip = true;
+          showTip(d);
+        }
         const { altitude } = globe.pointOfView();
         globe.pointOfView({ lat: d.lat, lng: d.lng ?? d.lon, altitude }, 900);
       });
@@ -705,6 +765,30 @@
     }
     window.addEventListener('mousemove', e => {
       tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px';
+    });
+
+    // Expanded intelligence brief panel (conflict layer click).
+    const detail = document.getElementById('detail');
+    function showDetail(d) {
+      if (!d) { detail.classList.remove('open'); return; }
+      document.getElementById('d-badge').textContent = d.eventType || 'Intelligence';
+      document.getElementById('d-sev').textContent =
+        '◆'.repeat(d.severity || 1) + '◇'.repeat(Math.max(0, 5 - (d.severity || 1)));
+      document.getElementById('d-place').textContent =
+        d.place + (d.country && !d.place.includes(d.country) ? `, ${d.country}` : '');
+      document.getElementById('d-headline').textContent = d.headline || '';
+      document.getElementById('d-summary').textContent = d.summary || '';
+      const meta = [];
+      if (d.srcName)   meta.push(d.srcName);
+      if (d.published) meta.push(new Date(d.published).toUTCString().replace('GMT', 'UTC'));
+      document.getElementById('d-meta').textContent = meta.join('  ·  ');
+      const src = document.getElementById('d-src');
+      if (d.url) { src.href = d.url; src.style.display = ''; }
+      else       { src.style.display = 'none'; }
+      detail.classList.add('open');
+    }
+    document.getElementById('detail-close').addEventListener('click', e => {
+      e.stopPropagation(); showDetail(null);
     });
 
     // ============================================================
@@ -759,6 +843,8 @@
             place: p.place, type: p.type, time: p.time,
             magnitude: p.magnitude, depth: p.depth, country: p.country,
             altitude: p.altitude, velocity: p.velocity, count: p.count,
+            severity: p.severity, eventType: p.eventType, summary: p.summary,
+            headline: p.headline, srcName: p.srcName, url: p.url, published: p.published,
           });
           if (layer.ringIf && layer.ringIf(p)) {
             rings.push({ lat: p.lat, lon: p.lon, color,
@@ -878,22 +964,19 @@
         if (!raw) { markErr(source); return; }
         state[source].data = EXTRACT.adsb(raw);
         markOk(source);
-      } else if (source === 'gdelt') {
-        let raw = null;
-        if (timeMode === 'live') {
-          // GDELT supports CORS — try browser-direct first so residential IP is used
-          // instead of Vercel datacenter IP, which GDELT tends to block/rate-limit.
-          const u = new URL('https://api.gdeltproject.org/api/v2/geo/geo');
-          u.searchParams.set('query', '(conflict OR airstrike OR shelling OR offensive OR clashes OR militants OR insurgency)');
-          u.searchParams.set('format', 'GeoJSON');
-          u.searchParams.set('mode', 'PointData');
-          u.searchParams.set('timespan', '1d');
-          raw = await fetchJSON(u.toString());
-        }
-        if (!raw) raw = await fetchJSON(`/api/feed?source=gdelt${timeParams()}`);
+      } else if (source === 'intelligence') {
+        // News → Gemini OSINT pipeline (last ~24h). Represents current events,
+        // so it loads in every time mode rather than tracking the scrubber.
+        const raw = await fetchJSON('/api/intelligence');
         if (!raw) { markErr('conflict'); return; }
-        state.conflict.data = EXTRACT.gdelt(raw);
-        markOk('conflict');
+        if (raw._unconfigured) {
+          state.conflict._unconfigured = true;
+          state.conflict.visible = false;   // auto-hide when GEMINI_API_KEY absent
+        } else {
+          state.conflict._unconfigured = false;
+          state.conflict.data = EXTRACT.intelligence(raw);
+          markOk('conflict');
+        }
       } else if (source === 'gdacs') {
         const raw = await fetchJSON('/api/feed?source=gdacs');
         if (!raw) { markErr('alerts'); return; }
@@ -943,7 +1026,7 @@
       if (state.ships.visible)    refresh('ships');
     }
 
-    const POLL_SOURCES = ['earthquakes', 'events', 'gdelt', 'gdacs', 'aircraft', 'military', 'ships'];
+    const POLL_SOURCES = ['earthquakes', 'events', 'intelligence', 'gdacs', 'aircraft', 'military', 'ships'];
     let timers = [];
     function startScheduler() {
       stopScheduler();
@@ -956,7 +1039,7 @@
 
     function reloadAll() {
       // Re-pull every layer for the current time mode (used by the scrubber).
-      ['earthquakes', 'events', 'gdelt'].forEach(refresh);
+      ['earthquakes', 'events', 'intelligence'].forEach(refresh);
       if (timeMode === 'live') refreshViewBounded();
       // Satellite surface tracks the scrubbed day — reload the WMS image for the new date.
       if (baseMode === 2) globe.globeImageUrl(gibsImageUrl());
@@ -990,6 +1073,7 @@
     }
     globe.onGlobeClick(({ lat, lng }) => {
       if (pinnedTip) { pinnedTip = false; showTip(null); }
+      showDetail(null);
       if (!measuring) return;
       measurePts.push({ lat, lng });
       if (measurePts.length === 2) {
@@ -1120,7 +1204,9 @@
         const s = state[key];
         if (s._unconfigured) {
           countEl.textContent = '—';
-          countEl.title = 'Set AISSTREAM_KEY env var to enable (free signup at aisstream.io)';
+          countEl.title = key === 'ships'
+            ? 'Set AISSTREAM_KEY env var to enable (free signup at aisstream.io)'
+            : 'Set GEMINI_API_KEY env var to enable the news intelligence pipeline';
           if (ageEl) { ageEl.textContent = 'not configured'; ageEl.className = 'age'; }
         } else if (s.error) {
           countEl.textContent = '!';
@@ -1149,7 +1235,7 @@
       el.innerHTML =
         `<b>${c('earthquakes')}</b> quakes · <b>${c('fires')}</b> fires · ` +
         `<b>${c('volcanoes')}</b> volcanoes · <b>${c('alerts')}</b> alerts<br>` +
-        `<b>${c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft · ` +
+        `<b>${state.conflict._unconfigured ? '—' : c('conflict')}</b> conflict · <b>${c('aircraft').toLocaleString()}</b> aircraft · ` +
         `<b>${state.ships._unconfigured ? '—' : c('ships').toLocaleString()}</b> ships`;
     }
 

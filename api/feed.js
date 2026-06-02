@@ -5,7 +5,6 @@
 //   /api/feed?source=earthquakes[&from=ISO&to=ISO]
 //   /api/feed?source=events[&from=ISO&to=ISO]
 //   /api/feed?source=aircraft&lat=..&lon=..&dist=..   (browser uses feeds direct; this is a fallback)
-//   /api/feed?source=gdelt[&from=ISO&to=ISO]
 //   /api/feed?source=gdacs
 //   /api/feed?source=geocode&q=...
 //   /api/feed?source=ships&lat=..&lon=..              (requires AISSTREAM_KEY env var)
@@ -21,14 +20,8 @@
 
 const DEFAULT_TTL = 60;
 
-function gdeltStamp(iso) {
-  // GDELT wants YYYYMMDDHHMMSS (UTC)
-  const d = new Date(iso);
-  if (isNaN(d)) return null;
-  return d.toISOString().replace(/[-:T]/g, '').slice(0, 14);
-}
-
 // Resolve a request into an upstream URL + cache TTL.
+// (Conflict intelligence lives in its own function — see api/intelligence.js.)
 function resolveUpstream(source, params) {
   switch (source) {
     case 'earthquakes': {
@@ -68,23 +61,6 @@ function resolveUpstream(source, params) {
         return { url: `https://api.adsb.lol/v2/point/${lat}/${lon}/${dist}`, ttl: 15 };
       }
       return { url: 'https://api.adsb.lol/v2/mil', ttl: 15 };
-    }
-    case 'gdelt': {
-      const query = '(conflict OR airstrike OR shelling OR offensive OR clashes OR militants OR insurgency)';
-      const u = new URL('https://api.gdeltproject.org/api/v2/geo/geo');
-      u.searchParams.set('query', query);
-      u.searchParams.set('format', 'GeoJSON');
-      u.searchParams.set('mode', 'PointData');
-      const from = params.get('from');
-      const to   = params.get('to');
-      if (from && to) {
-        const a = gdeltStamp(from), b = gdeltStamp(to);
-        if (a) u.searchParams.set('startdatetime', a);
-        if (b) u.searchParams.set('enddatetime', b);
-      } else {
-        u.searchParams.set('timespan', '1d');
-      }
-      return { url: u.toString(), ttl: 900 };
     }
     case 'gdacs': {
       // Global Disaster Alert & Coordination System — last ~100 events / 4 days
@@ -214,7 +190,7 @@ export default async function handler(req, res) {
   if (!resolved) {
     return send({
       error: 'Unknown or missing `source` parameter.',
-      valid: ['earthquakes', 'events', 'aircraft', 'gdelt', 'gdacs', 'geocode', 'ships'],
+      valid: ['earthquakes', 'events', 'aircraft', 'gdacs', 'geocode', 'ships'],
     }, 400);
   }
   if (resolved.unconfigured) {
@@ -249,9 +225,6 @@ export default async function handler(req, res) {
 
     if (source === 'aircraft' && [401, 403, 429].includes(resp.status)) {
       return send({ ac: [], _limited: true });
-    }
-    if (source === 'gdelt' && [401, 403, 429].includes(resp.status)) {
-      return send({ features: [], _limited: true });
     }
 
     const body        = await resp.text();

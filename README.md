@@ -19,7 +19,7 @@ public upstream sources, keeping the project free, key-less, and self-deployable
 | **Wildfires / Volcanoes / Storms / Floods** | NASA EONET v3 | `eonet.gsfc.nasa.gov/api/v3/events` | No | proxy |
 | **Aircraft** | adsb.lol → airplanes.live → adsb.one | `/v2/point/{lat}/{lon}/250` | No | **browser-direct** (proxy fallback) |
 | **Military aircraft** | adsb.lol (and fallbacks) | `/v2/mil` | No | browser-direct (proxy fallback) |
-| **Conflict events** | GDELT GEO 2.0 | `api.gdeltproject.org/api/v2/geo/geo` | No | proxy |
+| **Conflict / OSINT** | News RSS (Google News · BBC · Al Jazeera · UN News) → Gemini | `/api/intelligence` | Yes (free tier, optional) | proxy |
 | **Disaster alerts** | GDACS | `gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP` | No | proxy |
 | **Place search** | OSM Nominatim | `nominatim.openstreetmap.org/search` | No | proxy |
 | **Country borders** | Natural Earth (110m) | GitHub raw GeoJSON | No | browser-direct |
@@ -49,6 +49,8 @@ Please don't "simplify" aircraft back into a plain server-side fetch — it will
 | Variable | Required | Purpose |
 |---|---|---|
 | `AISSTREAM_KEY` | No | Enables the ships layer via [aisstream.io](https://aisstream.io/) (WebSocket AIS feed, free signup). Without it the layer is silently hidden. |
+| `GEMINI_API_KEY` | No | Enables the conflict/OSINT layer — fetches free news RSS feeds and runs a single [Gemini](https://ai.google.dev/) call (default `gemini-1.5-flash`) to geotag + analyse them. The result is edge-cached for 30 min, so the free tier comfortably covers it. Without the key the layer is silently hidden. |
+| `GEMINI_MODEL` | No | Override the Gemini model used by the intelligence pipeline (default `gemini-1.5-flash`). |
 
 > Node **22.x** required.
 
@@ -67,9 +69,11 @@ Please don't "simplify" aircraft back into a plain server-side fetch — it will
 - **Satellite surface cycle** — the surface button cycles night-Earth → daytime Blue Marble →
   live NASA GIBS daily satellite imagery (fetched as a full-world WMS image, so it follows the
   time scrubber).
-- **Global time scrubber** — drag back up to 30 days to replay quakes, hazards, and conflict
-  events together. Live-only layers (aircraft) hide during playback; the **LIVE** button returns
-  everything to realtime.
+- **Conflict / OSINT intelligence** — free news wire feeds are batched through a single Gemini
+  call that geotags each story, classifies the event type, rates severity 1–5, and writes a short
+  analytical brief. Click a node for the expanded brief with a link back to the source.
+- **Global time scrubber** — drag back up to 30 days to replay quakes and hazards. Live-only layers
+  (aircraft, ships) hide during playback; the **LIVE** button returns everything to realtime.
 - **Geospatial tools** — country borders, place search (fly-to), day/night terminator overlay, and
   click-two-points distance measurement (km / NM).
 
@@ -99,7 +103,7 @@ npm run dev          # → http://localhost:4321  (no deps, no Vercel CLI needed
 - **USGS**, **NASA EONET / Blue Marble / GIBS** — public domain.
 - **ADS-B**: adsb.lol / airplanes.live / adsb.one — community feeds; respect their non-commercial terms.
 - **aisstream.io** — WebSocket AIS vessel stream; free tier, no data-sharing required.
-- **GDELT** — [The GDELT Project](https://www.gdeltproject.org/).
+- **Conflict / OSINT** — public news RSS feeds (Google News, **BBC**, **Al Jazeera**, **UN News**) analysed by **Google Gemini**. Respect each publisher's terms; headlines link back to the source.
 - **GDACS** — [Global Disaster Alert and Coordination System](https://www.gdacs.org/) (UN/EC JRC).
 - **OpenStreetMap / Nominatim** — © OpenStreetMap contributors, per the
   [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/) (max 1 req/s).
