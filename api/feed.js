@@ -8,13 +8,15 @@
 //   /api/feed?source=gdelt[&from=ISO&to=ISO]
 //   /api/feed?source=gdacs
 //   /api/feed?source=geocode&q=...
-//   /api/feed?source=ships&lat=..&lon=..              (requires AISHUB_KEY env var)
+//   /api/feed?source=ships&lat=..&lon=..              (requires AISSTREAM_KEY env var)
 //
 // Aircraft is deliberately NOT the primary path from this server: community
 // ADS-B feeds block datacenter IPs, so the browser fetches them directly
 // (residential IP); this proxy is only a fallback.
 //
-// Ships (AIS Hub): requires AISHUB_KEY env var (free signup at aishub.net).
+// Ships (aisstream.io): requires AISSTREAM_KEY env var (free signup at aisstream.io).
+// Opens a WebSocket, collects PositionReport + ShipStaticData messages for ~2.5 s,
+// normalises to AIS Hub field names, and returns a { vessels: [...] } snapshot.
 // Returns { vessels: [], _unconfigured: true } gracefully when key is absent.
 
 const DEFAULT_TTL = 60;
@@ -98,25 +100,85 @@ function resolveUpstream(source, params) {
       return { url: u.toString(), ttl: 86400 };
     }
     case 'ships': {
-      const key = process.env.AISHUB_KEY;
+      const key = process.env.AISSTREAM_KEY;
       if (!key) return { unconfigured: true };
       const lat = parseFloat(params.get('lat') || '0');
       const lon = parseFloat(params.get('lon') || '0');
-      const pad = 15;
-      const u = new URL('http://data.aishub.net/ws.php');
-      u.searchParams.set('username', key);
-      u.searchParams.set('format', '1');
-      u.searchParams.set('output', 'json');
-      u.searchParams.set('compress', '0');
-      u.searchParams.set('latmin', Math.max(-90,  lat - pad).toFixed(2));
-      u.searchParams.set('latmax', Math.min(90,   lat + pad).toFixed(2));
-      u.searchParams.set('lonmin', Math.max(-180, lon - pad).toFixed(2));
-      u.searchParams.set('lonmax', Math.min(180,  lon + pad).toFixed(2));
-      return { url: u.toString(), ttl: 60 };
+      return { wsStream: true, key, lat, lon, ttl: 60 };
     }
     default:
       return undefined;
   }
+}
+
+// ---------------------------------------------------------------------------
+// aisstream.io WebSocket snapshot collector
+// Opens a connection, subscribes to a lat/lon bounding box, collects
+// PositionReport + ShipStaticData messages for collectMs milliseconds, then
+// closes and returns an array of normalised vessel objects (AIS Hub field names).
+// ---------------------------------------------------------------------------
+async function collectAisStream(key, lat, lon, padDeg = 15, collectMs = 2500) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
+    const byMmsi = new Map();
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch {}
+      resolve([...byMmsi.values()]);
+    };
+
+    const timer = setTimeout(finish, collectMs);
+
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({
+        APIKey: key,
+        BoundingBoxes: [[[lat - padDeg, lon - padDeg], [lat + padDeg, lon + padDeg]]],
+        FilterMessageTypes: ['PositionReport', 'ShipStaticData'],
+      }));
+    });
+
+    ws.addEventListener('message', ({ data }) => {
+      try {
+        const msg = JSON.parse(typeof data === 'string' ? data : String(data));
+        const mmsi = msg.MetaData?.MMSI;
+        if (!mmsi) return;
+        const existing = byMmsi.get(mmsi) || {};
+        const meta = msg.MetaData || {};
+
+        if (msg.MessageType === 'PositionReport') {
+          const p = msg.Message?.PositionReport || {};
+          byMmsi.set(mmsi, {
+            ...existing,
+            MMSI:      mmsi,
+            LATITUDE:  meta.latitude  ?? existing.LATITUDE,
+            LONGITUDE: meta.longitude ?? existing.LONGITUDE,
+            NAME:      meta.ShipName?.trim()  || existing.NAME  || null,
+            COG:       p.Cog    ?? existing.COG,
+            SOG:       p.Sog    ?? existing.SOG,
+            HEADING:   (p.TrueHeading != null && p.TrueHeading !== 511)
+                         ? p.TrueHeading : (existing.HEADING ?? null),
+          });
+        } else if (msg.MessageType === 'ShipStaticData') {
+          const s = msg.Message?.ShipStaticData || {};
+          byMmsi.set(mmsi, {
+            ...existing,
+            MMSI:      mmsi,
+            LATITUDE:  meta.latitude  ?? existing.LATITUDE,
+            LONGITUDE: meta.longitude ?? existing.LONGITUDE,
+            NAME:      s.Name?.trim() || meta.ShipName?.trim() || existing.NAME || null,
+            TYPE:      s.TypeOfShipAndCargo ?? existing.TYPE,
+            DEST:      s.Destination?.trim() || existing.DEST || null,
+          });
+        }
+      } catch {}
+    });
+
+    ws.addEventListener('error', () => { clearTimeout(timer); finish(); });
+    ws.addEventListener('close', () => { clearTimeout(timer); finish(); });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +219,20 @@ export default async function handler(req, res) {
   }
   if (resolved.unconfigured) {
     return send({ vessels: [], _unconfigured: true });
+  }
+
+  // WebSocket snapshot path (ships via aisstream.io)
+  if (resolved.wsStream) {
+    try {
+      const vessels = await collectAisStream(resolved.key, resolved.lat, resolved.lon);
+      if (debug) {
+        return send({ source: 'ships', provider: 'aisstream.io', collected: vessels.length,
+                      sample: vessels.slice(0, 3) });
+      }
+      return send({ vessels }, 200, resolved.ttl);
+    } catch (err) {
+      return send({ vessels: [], _error: String(err) }, 200, 0);
+    }
   }
 
   const { url: upstream, ttl } = resolved;
