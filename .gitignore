@@ -6,3 +6,6 @@ node_modules/
 *.log
 
 .vercel
+
+# Claude project memory — keep locally, not in repo
+CLAUDE.md
